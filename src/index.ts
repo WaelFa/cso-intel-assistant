@@ -14,7 +14,7 @@
 
 import "dotenv/config";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { Memory, VoltAgent } from "@voltagent/core";
+import { InMemoryVectorAdapter, Memory, VoltAgent } from "@voltagent/core";
 import { LibSQLMemoryAdapter } from "@voltagent/libsql";
 import { createPinoLogger } from "@voltagent/logger";
 import { honoServer } from "@voltagent/server-hono";
@@ -25,8 +25,8 @@ import { createSupervisorAgent } from "./agents/index.js";
 // Structured JSON logging via Pino.
 // Change level to "debug" when troubleshooting.
 const logger = createPinoLogger({
-  name: "cso-intel-assistant",
-  level: "info",
+	name: "cso-intel-assistant",
+	level: "info",
 });
 
 // ── 2. Memory ─────────────────────────────────────────────────────
@@ -34,27 +34,57 @@ const logger = createPinoLogger({
 // Every user message and agent response is stored here so the
 // agent can "remember" earlier parts of the conversation.
 //
-// See docs/00-voltagent-foundations.md → "Memory & LibSQL" section.
+// We also enable vector memory (embeddings + in-memory vector store)
+// so that Phase 3 RAG tools (document upload + retrieval) can attach
+// the same Memory instance for semantic search across past turns.
+//
+// See docs/00-voltagent-foundations.md → "Memory & LibSQL" section,
+// and docs/01-multi-agent-architecture.md → "Vector Memory".
 const memory = new Memory({
-  storage: new LibSQLMemoryAdapter({
-    url: "file:./.voltagent/memory.db",
-    logger: logger.child({ component: "libsql" }),
-  }),
+	storage: new LibSQLMemoryAdapter({
+		url: "file:./.voltagent/memory.db",
+		logger: logger.child({ component: "libsql" }),
+	}),
+	// OpenRouter exposes OpenAI-compatible embeddings; reusing the
+	// same endpoint keeps the wiring simple.
+	embedding: "openai/text-embedding-3-small",
+	vector: new InMemoryVectorAdapter(),
 });
 
 // ── 3. LLM Provider ──────────────────────────────────────────────
 // OpenRouter gives us access to 100+ models through one API key.
 // We use the OpenAI-compatible protocol (the de facto standard).
 //
-// Change the model ID to try different models:
-//   "openai/gpt-4o-mini"           → Fast & cheap (default)
-//   "openai/gpt-4o"                → More capable
-//   "anthropic/claude-3.5-sonnet"  → Great for analysis
-//   "google/gemini-2.0-flash"      → Google's latest
+// Default: "openai/gpt-4o-mini" — cheap, reliable, mature tool-calling.
+//
+// To switch, set MODEL_ID in .env (or change the line below) and restart npm run dev.
+// Pricing is per 1M tokens (input / output). All listed are under $1/M both ways
+// as of Jun 2026 — the budget envelope for this project.
+//
+// Top recommendations for a CSO strategic-intelligence workload:
+//
+//   deepseek/deepseek-chat-v3.2   $0.28 / $0.42  ⭐ frontier quality at budget price
+//   google/gemini-2.5-flash-lite  $0.10 / $0.40  ⭐ 1M context, free dev tier
+//   openai/gpt-4.1-nano           $0.10 / $0.40  ⭐ 1M context, most mature fn-calling
+//   google/gemini-2.0-flash       $0.10 / $0.40    1M context, reliable
+//   openai/gpt-4o-mini            $0.15 / $0.60    current default, works fine
+//   openai/gpt-5-nano             $0.05 / $0.40    absolute cheapest, smaller model
+//   mistralai/mistral-small-3.2   $0.10 / $0.30    GDPR-friendly, 131K context
+//   qwen/qwen3-32b                $0.18 / $0.28    strong general purpose
+//   meta-llama/llama-3.3-70b      $0.59 / $0.79    large open-weights
+//   x-ai/grok-4-fast              $0.20 / $0.50    2M context (largest available)
+//
+// Notes:
+//  - For Phase 3 RAG (long document context), prefer gemini-2.5-flash-lite or gpt-4.1-nano
+//    (both 1M context). DeepSeek-chat-v3.2 is 128K.
+//  - For complex multi-step reasoning (sub-agent orchestration), deepseek-chat-v3.2
+//    gives the best quality-per-dollar in this price band.
+//  - Claude Haiku 4.5 ($1.00/$5.00) is exactly at the input limit and $5 output —
+//    excluded; use deepseek-chat-v3.2 for Anthropic-style quality on a budget.
 const openrouter = createOpenAICompatible({
-  name: "openrouter",
-  baseURL: process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENAI_API_KEY ?? "",
+	name: "openrouter",
+	baseURL: process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1",
+	apiKey: process.env.OPENAI_API_KEY ?? "",
 });
 
 const model = openrouter(process.env.MODEL_ID ?? "openai/gpt-4o-mini");
@@ -77,7 +107,7 @@ const agent = createSupervisorAgent({ model, memory });
 //   - API:     http://localhost:3141
 //   - Console: https://console.voltagent.dev (visual chat + observability)
 new VoltAgent({
-  agents: { agent },
-  server: honoServer(),
-  logger,
+	agents: { agent },
+	server: honoServer(),
+	logger,
 });

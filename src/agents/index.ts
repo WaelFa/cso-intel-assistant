@@ -9,9 +9,9 @@
 // ──────────────────────────────────────────────────────────────────
 
 export {
-  createSupervisorAgent,
-  createMarketIntelAgent,
-  createRegulatoryIntelAgent,
-  createCompetitorIntelAgent,
-  createExecCommsAgent,
+	createSupervisorAgent,
+	createMarketIntelAgent,
+	createRegulatoryIntelAgent,
+	createCompetitorIntelAgent,
+	createExecCommsAgent,
 } from "./agents.js";
