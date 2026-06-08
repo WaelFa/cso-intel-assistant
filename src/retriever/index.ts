@@ -366,7 +366,6 @@ export class DocumentStore {
 	}
 }
 
-
 // ── Helpers ───────────────────────────────────────────────────────
 
 function makeExcerpt(text: string, max: number): string {

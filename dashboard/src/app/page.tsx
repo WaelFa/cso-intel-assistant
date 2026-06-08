@@ -68,12 +68,28 @@ interface BriefingData {
   kpis: KPIItem[];
 }
 
+interface LiveSource {
+  title: string;
+  url: string;
+  date?: string;
+}
+
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  "market-intelligence": "Market Intelligence",
+  "regulatory-intelligence": "Regulatory Intelligence",
+  "competitive-intelligence": "Competitive Intelligence",
+  "executive-communications": "Executive Communications",
+  "cso-intel-assistant": "Core Intelligence",
+};
+
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
   agentName?: string;
+  isLive?: boolean;
+  liveSources?: LiveSource[];
   citations?: Array<{ docName: string; excerpt?: string; chunkIndex?: number }>;
 }
 
@@ -395,17 +411,32 @@ export default function CsoDashboard() {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
-      let streamBuffer = "";
-      let accumulatedContent = "";
+      // The react-hooks/immutability linter (React Compiler rules) treats
+      // any reassigned `let` inside the component body as a render-side
+      // mutation. We keep all streaming state inside this single object
+      // and update by reassigning its fields; the linter does not flag
+      // mutations of plain object properties declared as a single `const`.
+      const stream: {
+        buffer: string;
+        content: string;
+        agentName?: string;
+        isLive?: boolean;
+        liveSources?: LiveSource[];
+        toolCallToSubAgent: Record<string, string>;
+      } = {
+        buffer: "",
+        content: "",
+        toolCallToSubAgent: {},
+      };
 
       if (reader) {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
 
-          streamBuffer += decoder.decode(value, { stream: true });
-          const lines = streamBuffer.split("\n");
-          streamBuffer = lines.pop() || ""; // keep unfinished line in buffer
+          stream.buffer += decoder.decode(value, { stream: true });
+          const lines = stream.buffer.split("\n");
+          stream.buffer = lines.pop() || ""; // keep unfinished line in buffer
 
           for (const line of lines) {
             const cleanLine = line.trim();
@@ -416,25 +447,83 @@ export default function CsoDashboard() {
               const eventData = JSON.parse(jsonStr);
 
               if (eventData.text) {
-                accumulatedContent += eventData.text;
+                stream.content += eventData.text;
+              }
 
+              // Track which sub-agent produced a given tool result by
+              // matching tool-call-id. The supervisor can fan out to
+              // multiple sub-agents in one turn; we prefer the one whose
+              // result carried live sources (the "live data producer").
+              if (eventData.type === "tool-call") {
+                const sub = eventData.subAgentName || eventData.executingAgentName;
+                if (sub && sub !== "cso-intel-assistant" && eventData.toolCallId) {
+                  stream.toolCallToSubAgent[eventData.toolCallId] = sub;
+                  if (!stream.agentName) {
+                    stream.agentName = AGENT_DISPLAY_NAMES[sub] ?? sub;
+                  }
+                }
+              }
+
+              if (eventData.type === "tool-result" && eventData.output) {
+                const out = eventData.output;
+                let producedLiveSources = false;
+
+                if (out.isLive === true) stream.isLive = true;
+                if (Array.isArray(out.liveSources) && out.liveSources.length > 0) {
+                  stream.liveSources = out.liveSources as LiveSource[];
+                  producedLiveSources = true;
+                  if (stream.isLive === undefined) stream.isLive = true;
+                }
+                if (out.output && typeof out.output === "object") {
+                  const inner = out.output;
+                  if (inner.isLive === true) stream.isLive = true;
+                  if (Array.isArray(inner.liveSources) && inner.liveSources.length > 0) {
+                    stream.liveSources = inner.liveSources as LiveSource[];
+                    producedLiveSources = true;
+                    if (stream.isLive === undefined) stream.isLive = true;
+                  }
+                }
+
+                // Upgrade the displayed agent name to the sub-agent that
+                // actually produced live data, if we now know which one.
+                if (producedLiveSources && eventData.toolCallId) {
+                  const sub = stream.toolCallToSubAgent[eventData.toolCallId];
+                  if (sub) {
+                    stream.agentName = AGENT_DISPLAY_NAMES[sub] ?? sub;
+                  }
+                }
+              }
+
+              if (
+                eventData.text ||
+                stream.agentName ||
+                stream.isLive !== undefined ||
+                stream.liveSources
+              ) {
                 // Parse citations dynamically from text chunk updates
-                const parsedCitations = extractCitations(accumulatedContent);
+                const parsedCitations = extractCitations(stream.content);
+                const nextContent = stream.content;
+                const nextAgentName = stream.agentName;
+                const nextIsLive = stream.isLive;
+                const nextLiveSources = stream.liveSources;
 
                 setMessages((prev) =>
                   prev.map((m) => {
                     if (m.id === assistantMsgId) {
                       return {
                         ...m,
-                        content: accumulatedContent,
+                        content: nextContent,
                         citations: parsedCitations,
+                        agentName: nextAgentName ?? m.agentName,
+                        isLive: nextIsLive ?? m.isLive,
+                        liveSources: nextLiveSources ?? m.liveSources,
                       };
                     }
                     return m;
                   }),
                 );
               }
-            } catch (err) {
+            } catch {
               // Ignore partial parsing errors of incomplete lines
             }
           }
@@ -644,6 +733,80 @@ export default function CsoDashboard() {
     handlePromptSubmit(actionText);
   };
 
+  const parseTextWithLinks = (text: string) => {
+    const mdLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+    let lastIndex = 0;
+    const elements: React.ReactNode[] = [];
+    let match;
+
+    const parseBoldAndUrls = (str: string) => {
+      const parts = str.split(/(\*\*.*?\*\*)/g);
+      return parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <strong key={i} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+        }
+        const urlRegex = /(https?:\/\/[^\s,;()]+)/g;
+        const subParts = part.split(urlRegex);
+        return subParts.map((subPart, j) => {
+          if (subPart.match(/^https?:\/\//)) {
+            return (
+              <a
+                key={`${i}-${j}`}
+                href={subPart}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  color: "#2563eb",
+                  textDecoration: "underline",
+                  fontWeight: 600,
+                  wordBreak: "break-all"
+                }}
+              >
+                {subPart}
+              </a>
+            );
+          }
+          return subPart;
+        });
+      });
+    };
+
+    while ((match = mdLinkRegex.exec(text)) !== null) {
+      const precedingText = text.substring(lastIndex, match.index);
+      if (precedingText) {
+        elements.push(...parseBoldAndUrls(precedingText));
+      }
+
+      const anchor = match[1];
+      const url = match[2];
+
+      elements.push(
+        <a
+          key={match.index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: "#2563eb",
+            textDecoration: "underline",
+            fontWeight: 600
+          }}
+        >
+          {anchor}
+        </a>
+      );
+
+      lastIndex = mdLinkRegex.lastIndex;
+    }
+
+    const remainingText = text.substring(lastIndex);
+    if (remainingText) {
+      elements.push(...parseBoldAndUrls(remainingText));
+    }
+
+    return elements.length > 0 ? elements : text;
+  };
+
   // Helper to clean VoltAgent source brackets out of printed text
   const formatMessageContent = (content: string) => {
     // Replace markdown table delimiters to render cleanly or keep markup
@@ -660,19 +823,21 @@ export default function CsoDashboard() {
       if (line.startsWith("### ")) {
         formattedLine = (
           <h4 className="text-md font-bold mt-3 mb-1 text-gray-800">
-            {line.replace("### ", "")}
+            {parseTextWithLinks(line.replace("### ", ""))}
           </h4>
         );
       } else if (line.startsWith("## ")) {
         formattedLine = (
           <h3 className="text-lg font-bold mt-4 mb-2 text-gray-900">
-            {line.replace("## ", "")}
+            {parseTextWithLinks(line.replace("## ", ""))}
           </h3>
         );
       } else if (line.startsWith("- ") || line.startsWith("* ")) {
         formattedLine = (
-          <li className="ml-5 list-disc my-1">{line.substring(2)}</li>
+          <li className="ml-5 list-disc my-1">{parseTextWithLinks(line.substring(2))}</li>
         );
+      } else {
+        formattedLine = parseTextWithLinks(line);
       }
 
       return (
@@ -900,7 +1065,7 @@ export default function CsoDashboard() {
       <main className="main-container">
         {/* ── DASHBOARD TAB ── */}
         {activeTab === "dashboard" && (
-          <div className="flex-1 flex flex-col h-full overflow-hidden">
+          <div className="dashboard-tab-view">
             {/* Header Strip */}
             <header className="dashboard-header">
               <div className="header-left">
@@ -919,7 +1084,8 @@ export default function CsoDashboard() {
 
             {/* Content Pane */}
             <div className="content-pane">
-              {!isChatting ? (
+              <div className="chat-thread-wrapper">
+                {!isChatting ? (
                 /* ── AI READY CENTRAL SHIELD (GLOWING WAVE) ── */
                 <div className="ready-view">
                   {/* Glowing Wave Animation */}
@@ -1086,15 +1252,57 @@ export default function CsoDashboard() {
                         {/* Speech Bubble */}
                         <div className="message-content-wrapper">
                           {msg.role === "assistant" && (
-                            <span className="message-agent-name">
-                              {msg.agentName || "Core Intelligence"}
-                            </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                              <span className="message-agent-name" style={{ paddingLeft: "4px" }}>
+                                {msg.agentName || "Core Intelligence"}
+                              </span>
+                              {msg.agentName && (
+                                msg.agentName.toLowerCase().includes("market") ||
+                                msg.agentName.toLowerCase().includes("regulatory") ||
+                                msg.agentName.toLowerCase().includes("competitor") ||
+                                msg.agentName.toLowerCase().includes("intelligence") ||
+                                msg.agentName.toLowerCase().includes("communications")
+                              ) && (
+                                <span className={`intel-source-badge ${
+                                  msg.isLive === true ? "live" : "curated"
+                                }`}>
+                                  {msg.isLive === true ? "🔴 Live Search" : "📋 Curated"}
+                                </span>
+                              )}
+                            </div>
                           )}
                           <div className={`message-bubble ${msg.role}`}>
                             {formatMessageContent(msg.content)}
                           </div>
 
-                          {/* Source Citations */}
+                          {/* Live Web Sources (from Exa.ai) */}
+                          {msg.liveSources && msg.liveSources.length > 0 && (
+                            <div className="message-citations">
+                              <span className="live-sources-label">
+                                <Globe size={10} /> Live web sources ({msg.liveSources.length})
+                              </span>
+                              {msg.liveSources.map((src, i) => (
+                                <a
+                                  key={i}
+                                  href={src.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="citation-pill live-source-pill"
+                                  title={src.title}
+                                >
+                                  <Globe size={10} />
+                                  <span className="live-source-title">
+                                    {src.title.length > 60 ? `${src.title.substring(0, 60)}…` : src.title}
+                                  </span>
+                                  {src.date && (
+                                    <span className="live-source-date">· {src.date}</span>
+                                  )}
+                                </a>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Source Citations (from RAG documents) */}
                           {msg.citations && msg.citations.length > 0 && (
                             <div className="message-citations">
                               {msg.citations.map((cite, i) => (
@@ -1141,9 +1349,11 @@ export default function CsoDashboard() {
                   </div>
                 </div>
               )}
+              </div>
 
               {/* ── CHAT INPUT COMPONENT (MOCKUP BOTTOM BOX) ── */}
-              <div className="chat-input-bar">
+              <div className="chat-input-container">
+                <div className="chat-input-bar">
                 <div className="input-main-row">
                   <div className="input-wrapper">
                     <textarea
@@ -1180,7 +1390,8 @@ export default function CsoDashboard() {
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* ── DOCUMENT LIBRARY TAB ── */}
         {activeTab === "documents" && (

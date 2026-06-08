@@ -9,6 +9,10 @@
 
 import { createTool } from "@voltagent/core";
 import { z } from "zod";
+import {
+	isExaAvailable,
+	searchRegulatoryChanges,
+} from "../services/exa-search.js";
 
 // ── Output Schema ─────────────────────────────────────────────────
 
@@ -23,6 +27,8 @@ const regulatoryChangeSchema = z.object({
 	impact: z.string().describe("What this means for our financial centre"),
 	actionRequired: z.string().describe("What we should do"),
 	source: z.string(),
+	isLive: z.boolean().optional(),
+	sourceUrl: z.string().optional(),
 });
 
 const regulatoryOutputSchema = z.object({
@@ -32,6 +38,7 @@ const regulatoryOutputSchema = z.object({
 	changes: z.array(regulatoryChangeSchema),
 	count: z.number(),
 	note: z.string(),
+	isLive: z.boolean().optional(),
 });
 
 // ── Curated Mock Changes ──────────────────────────────────────────
@@ -184,30 +191,77 @@ export const regulatoryTrackerTool = createTool({
 	}),
 	outputSchema: regulatoryOutputSchema,
 	execute: async ({ jurisdiction, sector, severity }) => {
-		let filtered = CHANGES;
+		// Filter curated changes
+		let curatedFiltered = CHANGES;
 		if (jurisdiction.toLowerCase() !== "global") {
-			filtered = filtered.filter((c) =>
+			curatedFiltered = curatedFiltered.filter((c) =>
 				c.jurisdiction.toLowerCase().includes(jurisdiction.toLowerCase()),
 			);
 		}
 		if (sector.toLowerCase() !== "all") {
-			filtered = filtered.filter(
+			curatedFiltered = curatedFiltered.filter(
 				(c) => c.sector.toLowerCase() === sector.toLowerCase(),
 			);
 		}
 		if (severity !== "all") {
 			const order = { high: 0, medium: 1, low: 2 } as const;
 			const threshold = order[severity];
-			filtered = filtered.filter((c) => order[c.severity] <= threshold);
+			curatedFiltered = curatedFiltered.filter(
+				(c) => order[c.severity] <= threshold,
+			);
 		}
+
+		// biome-ignore lint/suspicious/noExplicitAny: live changes are dynamic objects
+		let liveChanges: any[] = [];
+		let isLive = false;
+
+		if (isExaAvailable()) {
+			console.log(
+				`[tool:track_regulatory_changes] triggering Exa  jurisdiction="${jurisdiction}" sector="${sector}" severity=${severity}`,
+			);
+			try {
+				const liveResult = await searchRegulatoryChanges(jurisdiction, sector);
+				let filteredLive = liveResult.changes;
+				if (severity !== "all") {
+					const order = { high: 0, medium: 1, low: 2 } as const;
+					const threshold = order[severity];
+					// biome-ignore lint/suspicious/noExplicitAny: filter callback uses type casting
+					filteredLive = filteredLive.filter((c: any) => {
+						const cSeverity = c.severity as keyof typeof order;
+						return order[cSeverity] <= threshold;
+					});
+				}
+				console.log(
+					`[tool:track_regulatory_changes] Exa returned ${liveResult.changes.length} changes (${filteredLive.length} after severity=${severity} filter)`,
+				);
+				liveChanges = filteredLive;
+				isLive = true;
+			} catch (error) {
+				console.warn(
+					"[tool:track_regulatory_changes] Exa call failed, falling back to mock:",
+					error,
+				);
+			}
+		}
+
+		// Merge live changes first, followed by curated baseline
+		// biome-ignore lint/suspicious/noExplicitAny: map callback parameter
+		const mappedCurated = curatedFiltered.map((c: any) => ({
+			...c,
+			isLive: false,
+		}));
+		const allChanges = [...liveChanges, ...mappedCurated];
 
 		return {
 			jurisdiction,
 			sector,
 			severity,
-			changes: filtered,
-			count: filtered.length,
-			note: "Demo-grade curated regulatory intelligence. Production deployment will pull from LexisNexis, Bloomberg Government, and direct regulator feeds.",
+			changes: allChanges,
+			count: allChanges.length,
+			isLive,
+			note: isLive
+				? "Regulatory radar powered by Exa.ai live search combined with curated policy guidelines."
+				: "Demo-grade curated regulatory intelligence. Production deployment will pull from LexisNexis, Bloomberg Government, and direct regulator feeds.",
 		};
 	},
 });

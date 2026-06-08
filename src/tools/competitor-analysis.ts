@@ -9,6 +9,10 @@
 
 import { createTool } from "@voltagent/core";
 import { z } from "zod";
+import {
+	isExaAvailable,
+	searchCompetitorIntel,
+} from "../services/exa-search.js";
 
 // ── Output Schema ─────────────────────────────────────────────────
 
@@ -40,6 +44,16 @@ const competitorOutputSchema = z.object({
 		.array(z.string())
 		.describe("Concrete actions we could take in the next 90 days"),
 	note: z.string().describe("Demo-data disclaimer"),
+	isLive: z.boolean().optional(),
+	liveSources: z
+		.array(
+			z.object({
+				title: z.string(),
+				url: z.string(),
+				date: z.string(),
+			}),
+		)
+		.optional(),
 });
 
 // ── Curated Mock Profiles (centre × dimension) ────────────────────
@@ -296,15 +310,78 @@ export const competitorAnalysisTool = createTool({
 				? Object.values(centerProfiles)[0]
 				: DEFAULT_PROFILE);
 
+		let swot = {
+			strengths: [...profile.swot.strengths],
+			weaknesses: [...profile.swot.weaknesses],
+			opportunities: [...profile.swot.opportunities],
+			threats: [...profile.swot.threats],
+		};
+		let threatLevel = profile.threatLevel;
+		let responseOptions = [...profile.responseOptions];
+		let isLive = false;
+		// biome-ignore lint/suspicious/noExplicitAny: live sources are dynamic objects
+		let liveSources: any[] = [];
+		let strategicIntent = profile.strategicIntent;
+
+		if (isExaAvailable()) {
+			console.log(
+				`[tool:analyze_competitor] triggering Exa  center="${financialCenter}" dimension="${dimension}"`,
+			);
+			try {
+				const liveResult = await searchCompetitorIntel(
+					financialCenter,
+					dimension,
+				);
+				console.log(
+					`[tool:analyze_competitor] Exa returned ${liveResult.liveSources.length} live sources, threatLevel=${liveResult.threatLevel}`,
+				);
+
+				// Append live SWOT items
+				swot = {
+					strengths: [...swot.strengths, ...liveResult.swot.strengths],
+					weaknesses: [...swot.weaknesses, ...liveResult.swot.weaknesses],
+					opportunities: [
+						...swot.opportunities,
+						...liveResult.swot.opportunities,
+					],
+					threats: [...swot.threats, ...liveResult.swot.threats],
+				};
+
+				// Replace generic intent if we are using the default profile
+				if (profile === DEFAULT_PROFILE && liveResult.liveSources.length > 0) {
+					strategicIntent = `Live strategic updates for ${financialCenter} across ${dimension} dimension. Evaluated from real-time sources.`;
+				}
+
+				// Elevate threat level if live results suggest direct threats
+				if (liveResult.threatLevel === "direct" && threatLevel !== "direct") {
+					threatLevel = "direct";
+				}
+
+				// Append live response options
+				responseOptions = [...responseOptions, ...liveResult.responseOptions];
+				isLive = true;
+				liveSources = liveResult.liveSources;
+			} catch (error) {
+				console.warn(
+					"[tool:analyze_competitor] Exa call failed, falling back to mock:",
+					error,
+				);
+			}
+		}
+
 		return {
 			competitor: financialCenter,
 			dimension,
-			strategicIntent: profile.strategicIntent,
-			threatLevel: profile.threatLevel,
-			swot: profile.swot,
+			strategicIntent,
+			threatLevel,
+			swot,
 			benchmark: profile.benchmark,
-			responseOptions: profile.responseOptions,
-			note: "This is demo-grade curated data. Production deployment will pull from live regulatory feeds, industry reports, and proprietary channel checks.",
+			responseOptions,
+			isLive,
+			liveSources,
+			note: isLive
+				? "Hybrid intelligence: curated baseline enriched with Exa.ai live search updates."
+				: "This is demo-grade curated data. Production deployment will pull from live regulatory feeds, industry reports, and proprietary channel checks.",
 		};
 	},
 });

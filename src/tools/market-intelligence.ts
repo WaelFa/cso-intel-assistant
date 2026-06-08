@@ -15,6 +15,7 @@
 
 import { createTool } from "@voltagent/core";
 import { z } from "zod";
+import { isExaAvailable, searchMarketIntel } from "../services/exa-search.js";
 
 // ── Output Schema ─────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ const marketSignalSchema = z.object({
 	detail: z.string().describe("2-3 sentences of supporting context"),
 	magnitude: z.enum(["high", "medium", "low"]),
 	region: z.string().describe("Geographic region, e.g. 'Gulf', 'Asia-Pacific'"),
+	sourceUrl: z.string().optional(),
 });
 
 const marketOutputSchema = z.object({
@@ -37,6 +39,8 @@ const marketOutputSchema = z.object({
 		.describe(
 			"Demo-data disclaimer so the LLM doesn't treat mock data as live",
 		),
+	isLive: z.boolean().optional(),
+	sourceUrls: z.array(z.string()).optional(),
 });
 
 // ── Curated Mock Signals (topic-keyed) ────────────────────────────
@@ -153,6 +157,34 @@ export const marketIntelligenceTool = createTool({
 	}),
 	outputSchema: marketOutputSchema,
 	execute: async ({ topic, region, timeframe }) => {
+		if (isExaAvailable()) {
+			console.log(
+				`[tool:search_market_intelligence] triggering Exa  topic="${topic}" region="${region ?? "global"}" timeframe=${timeframe}`,
+			);
+			try {
+				const result = await searchMarketIntel(topic, region, timeframe);
+				console.log(
+					`[tool:search_market_intelligence] Exa returned ${result.signals.length} signals, trend=${result.trend}`,
+				);
+				return {
+					topic,
+					region,
+					timeframe,
+					trend: result.trend,
+					signals: result.signals,
+					sources: result.sources,
+					sourceUrls: result.sourceUrls,
+					isLive: true,
+					note: "Live intelligence from Exa.ai web search.",
+				};
+			} catch (error) {
+				console.warn(
+					"[tool:search_market_intelligence] Exa call failed, falling back to mock:",
+					error,
+				);
+			}
+		}
+
 		const signals = pickSignals(topic);
 		return {
 			topic,
@@ -171,6 +203,8 @@ export const marketIntelligenceTool = createTool({
 				"UNCTAD World Investment Report",
 				"Industry channel checks",
 			],
+			sourceUrls: [],
+			isLive: false,
 			note:
 				"This is demo-grade curated data for prototype purposes. " +
 				"Production deployment will route this through Brave/Tavily live search.",

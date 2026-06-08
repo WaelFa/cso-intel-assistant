@@ -21,9 +21,37 @@ import { LibSQLMemoryAdapter } from "@voltagent/libsql";
 import { createPinoLogger } from "@voltagent/logger";
 import { honoServer } from "@voltagent/server-hono";
 
+// Silence the noisy "System messages in the prompt or messages fields"
+// warning that the AI SDK emits when VoltAgent composes sub-agent
+// delegation calls. The warning is a false positive in this codebase —
+// our supervisor prompt is passed via the `system` option, and the
+// delegation scaffolding inside VoltAgent is the source of the
+// messages-arg system role. The AI SDK's `AI_SDK_LOG_WARNINGS` global
+// does NOT control this particular warning (it issues a direct
+// `console.warn` in `ai/dist/index.js`). We filter the specific
+// message via `console.warn` interception, which is scoped narrowly
+// to the substring below so legitimate warnings still surface.
+{
+	const ORIGINAL_WARN = console.warn.bind(console);
+	const SUPPRESS_PREFIX =
+		"AI SDK Warning: System messages in the prompt or messages fields";
+	console.warn = (...args: unknown[]) => {
+		const first = args[0];
+		if (typeof first === "string" && first.startsWith(SUPPRESS_PREFIX)) {
+			return;
+		}
+		ORIGINAL_WARN(...args);
+	};
+}
+
 import { createSupervisorAgent } from "./agents/index.js";
 import { seedDocuments } from "./data/seed-documents.js";
-import { DocumentStore, createAiSdkEmbedder, detectKind, extractText } from "./retriever/index.js";
+import {
+	DocumentStore,
+	createAiSdkEmbedder,
+	detectKind,
+	extractText,
+} from "./retriever/index.js";
 import { createIntelligencePipeline } from "./workflows/intelligence-pipeline.js";
 
 // ── 1. Logger ─────────────────────────────────────────────────────
@@ -198,7 +226,10 @@ new VoltAgent({
 					return c.json({ success: true, doc });
 				} catch (err) {
 					return c.json(
-						{ success: false, error: err instanceof Error ? err.message : String(err) },
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
 						500,
 					);
 				}
@@ -214,7 +245,10 @@ new VoltAgent({
 					return c.json({ error: "Document not found" }, 404);
 				} catch (err) {
 					return c.json(
-						{ success: false, error: err instanceof Error ? err.message : String(err) },
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
 						500,
 					);
 				}
