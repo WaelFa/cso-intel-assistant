@@ -230,6 +230,7 @@ h6 {
 .nav-button {
   position: relative;
   display: flex;
+  text-decoration: none;
   flex-direction: column;
   justify-content: center;
   align-items: center;
@@ -1899,7 +1900,11 @@ h6 {
 .focus-mode-banner {
   width: 100%;
   max-width: 768px;
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.06) 0%, rgba(239, 68, 68, 0.1) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(239, 68, 68, 0.06) 0%,
+    rgba(239, 68, 68, 0.1) 100%
+  );
   border: 1px solid rgba(239, 68, 68, 0.15);
   border-radius: 12px;
   padding: 10px 16px;
@@ -2000,7 +2005,8 @@ h6 {
   animation: stop-btn-pulse 2s infinite;
 }
 @keyframes stop-btn-pulse {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
   }
@@ -2032,4 +2038,3 @@ h6 {
   border-left-color: #ef4444;
   background-color: #fffafb;
 }
-
