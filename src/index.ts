@@ -23,7 +23,7 @@ import { honoServer } from "@voltagent/server-hono";
 
 import { createSupervisorAgent } from "./agents/index.js";
 import { seedDocuments } from "./data/seed-documents.js";
-import { DocumentStore, createAiSdkEmbedder } from "./retriever/index.js";
+import { DocumentStore, createAiSdkEmbedder, detectKind, extractText } from "./retriever/index.js";
 import { createIntelligencePipeline } from "./workflows/intelligence-pipeline.js";
 
 // ── 1. Logger ─────────────────────────────────────────────────────
@@ -163,6 +163,47 @@ const workflows = { "intelligence-pipeline": intelligencePipeline };
 new VoltAgent({
 	agents: { agent },
 	workflows,
-	server: honoServer(),
+	server: honoServer({
+		configureApp: (app) => {
+			app.get("/api/documents", (c) => {
+				try {
+					return c.json(documentStore.listDocuments());
+				} catch (err) {
+					return c.json(
+						{ error: err instanceof Error ? err.message : String(err) },
+						500,
+					);
+				}
+			});
+
+			app.post("/api/documents/upload", async (c) => {
+				try {
+					const body = await c.req.json();
+					const { name, content, mimeType, kind } = body;
+					if (!name || !content) {
+						return c.json({ error: "Missing name or content" }, 400);
+					}
+					const detected = kind ?? detectKind(name, mimeType);
+					const cleaned = content.replace(/^data:[^;]+;base64,/, "").trim();
+					const bytes = Buffer.from(cleaned, "base64");
+					const text = await extractText(bytes, detected, name);
+
+					const doc = await documentStore.ingest({
+						name,
+						kind: detected,
+						text,
+						source: "upload",
+					});
+
+					return c.json({ success: true, doc });
+				} catch (err) {
+					return c.json(
+						{ success: false, error: err instanceof Error ? err.message : String(err) },
+						500,
+					);
+				}
+			});
+		},
+	}),
 	logger,
 });
