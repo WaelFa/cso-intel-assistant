@@ -3,10 +3,12 @@
 //
 // This file wires everything together:
 //   1. Logger   → structured logging (Pino)
-//   2. Memory   → conversation persistence (LibSQL)
+//   2. Memory   → conversation persistence (LibSQL) + vector memory
 //   3. LLM      → language model provider (OpenRouter)
-//   4. Agents   → supervisor + specialized sub-agents
-//   5. Server   → HTTP/WebSocket endpoints (Hono)
+//   4. Retriever → document RAG store (Phase 3)
+//   5. Agents   → supervisor + specialized sub-agents
+//   6. Workflows → intelligence-pipeline (Phase 3)
+//   7. Server   → HTTP/WebSocket endpoints (Hono)
 //
 // Read docs/00-voltagent-foundations.md for a detailed walkthrough
 // of each component and why it exists.
@@ -20,6 +22,9 @@ import { createPinoLogger } from "@voltagent/logger";
 import { honoServer } from "@voltagent/server-hono";
 
 import { createSupervisorAgent } from "./agents/index.js";
+import { seedDocuments } from "./data/seed-documents.js";
+import { DocumentStore, createAiSdkEmbedder } from "./retriever/index.js";
+import { createIntelligencePipeline } from "./workflows/intelligence-pipeline.js";
 
 // ── 1. Logger ─────────────────────────────────────────────────────
 // Structured JSON logging via Pino.
@@ -89,7 +94,38 @@ const openrouter = createOpenAICompatible({
 
 const model = openrouter(process.env.MODEL_ID ?? "openai/gpt-4o-mini");
 
-// ── 4. Agents ─────────────────────────────────────────────────────
+// Embedding model — shared across the Memory (conversation
+// vector search) and the document RAG store. We use the
+// OpenRouter-hosted `openai/text-embedding-3-small`, which is
+// 1536 dimensions and inexpensive.
+const embeddingModel = openrouter.embeddingModel(
+	"openai/text-embedding-3-small",
+);
+
+// ── 4. Retriever (Phase 3) ────────────────────────────────────────
+// Centralised RAG store. One DocumentStore per process; rebuilt on
+// every restart. The seed loader below repopulates it from
+// `data/seed/` so the assistant has a working knowledge base
+// from the first request.
+const documentStore = new DocumentStore(createAiSdkEmbedder(embeddingModel));
+
+// Seed the corpus on boot. We do this BEFORE creating the agent
+// so the supervisor's retrieve_documents tool can return hits
+// from the first message. Failures here are non-fatal — the
+// server still comes up and uploads will still work.
+const seedResult = await seedDocuments(documentStore, { logger }).catch(
+	(err) => {
+		logger.error(
+			`[seed] Seed loader crashed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
+		);
+		return { attempted: 0, ingested: 0, skipped: 0, errors: [String(err)] };
+	},
+);
+logger.info(
+	`[seed] ${seedResult.ingested} ingested, ${seedResult.skipped} skipped, ${seedResult.errors.length} error(s)`,
+);
+
+// ── 5. Agents ─────────────────────────────────────────────────────
 // The supervisor agent is the main agent the CSO talks to.
 // It has 4 specialized sub-agents:
 //   - Market Intelligence
@@ -97,17 +133,36 @@ const model = openrouter(process.env.MODEL_ID ?? "openai/gpt-4o-mini");
 //   - Competitive Intelligence
 //   - Executive Communications
 //
+// Plus 5 direct supervisor tools (3 from Phase 2, 2 from Phase 3).
+//
 // See docs/01-multi-agent-architecture.md for how this works.
-const agent = createSupervisorAgent({ model, memory });
+const agent = createSupervisorAgent({ model, memory, documentStore });
 
-// ── 5. VoltAgent App ──────────────────────────────────────────────
-// Registers all agents and starts the Hono HTTP server on port 3141.
+// ── 6. Workflows (Phase 3) ────────────────────────────────────────
+// The intelligence-pipeline workflow demonstrates the
+// gather → RAG → synthesize → classify pattern. It is
+// registered with VoltAgent so it is reachable at
+//   POST /workflows/intelligence-pipeline/run
+// via the standard Hono server.
+const intelligencePipeline = createIntelligencePipeline({
+	documentStore,
+	supervisorAgent: agent,
+});
+const workflows = { "intelligence-pipeline": intelligencePipeline };
+
+// ── 7. VoltAgent App ──────────────────────────────────────────────
+// Registers all agents, workflows, and starts the Hono HTTP server
+// on port 3141.
 //
 // After starting:
-//   - API:     http://localhost:3141
-//   - Console: https://console.voltagent.dev (visual chat + observability)
+//   - API:      http://localhost:3141
+//   - /agents:  http://localhost:3141/agents
+//   - /tools:   http://localhost:3141/tools
+//   - /workflows: http://localhost:3141/workflows
+//   - Console:  https://console.voltagent.dev (visual chat + observability)
 new VoltAgent({
 	agents: { agent },
+	workflows,
 	server: honoServer(),
 	logger,
 });

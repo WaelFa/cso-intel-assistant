@@ -6,18 +6,21 @@
 // `description` field is the most important prompt you write —
 // it's what the model reads to decide when to invoke the tool.
 //
-// Assignment to agents (Phase 2 wiring in src/agents/agents.ts):
-//   - dailyBriefingTool      → supervisor
-//   - marketIntelligenceTool → market-intel sub-agent
-//   - competitorAnalysisTool → competitor-intel sub-agent
-//   - regulatoryTrackerTool  → regulatory-intel sub-agent
-//   - draftContentTool       → exec-comms sub-agent
-//   - riskIndicatorsTool     → supervisor
-//   - performanceMetricsTool → supervisor
+// Assignment to agents (Phase 2/3 wiring in src/agents/agents.ts):
+//   - dailyBriefingTool          → supervisor
+//   - riskIndicatorsTool         → supervisor
+//   - performanceMetricsTool     → supervisor
+//   - documentUploadTool         → supervisor (PDF / DOCX / TXT / MD)
+//   - documentRetrievalTool      → supervisor (RAG over uploaded docs)
+//   - marketIntelligenceTool     → market-intel sub-agent
+//   - competitorAnalysisTool     → competitor-intel sub-agent
+//   - regulatoryTrackerTool      → regulatory-intel sub-agent
+//   - draftContentTool           → exec-comms sub-agent
 //
-// Phase 3 will add:
-//   - documentUploadTool     → supervisor (uploads PDFs to RAG store)
-//   - documentRetrievalTool  → supervisor (RAG over uploaded docs)
+// The two document tools are FACTORIES (createDocumentUploadTool /
+// createDocumentRetrievalTool) — they need a live DocumentStore, which
+// is constructed in src/index.ts and passed in. We re-export the
+// factory functions and the DocumentStore type here for convenience.
 // ──────────────────────────────────────────────────────────────────
 
 export { dailyBriefingTool } from "./daily-briefing.js";
@@ -27,3 +30,5 @@ export { regulatoryTrackerTool } from "./regulatory-tracker.js";
 export { riskIndicatorsTool } from "./risk-indicators.js";
 export { performanceMetricsTool } from "./performance-metrics.js";
 export { draftContentTool } from "./draft-content.js";
+export { createDocumentUploadTool } from "./document-upload.js";
+export { createDocumentRetrievalTool } from "./document-retrieval.js";
