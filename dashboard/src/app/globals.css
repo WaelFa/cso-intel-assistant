@@ -1461,3 +1461,27 @@ h1, h2, h3, h4, h5, h6 {
   overflow-y: auto;
   line-height: 1.5;
 }
+
+/* Utilities & Custom Action Buttons */
+.hidden {
+  display: none !important;
+}
+
+.delete-document-button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.delete-document-button:hover {
+  background-color: #fee2e2;
+  color: #ef4444;
+}
+

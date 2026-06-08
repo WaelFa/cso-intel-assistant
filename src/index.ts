@@ -203,6 +203,22 @@ new VoltAgent({
 					);
 				}
 			});
+
+			app.delete("/api/documents/:id", async (c) => {
+				try {
+					const id = c.req.param("id");
+					const success = await documentStore.deleteDocument(id);
+					if (success) {
+						return c.json({ success: true });
+					}
+					return c.json({ error: "Document not found" }, 404);
+				} catch (err) {
+					return c.json(
+						{ success: false, error: err instanceof Error ? err.message : String(err) },
+						500,
+					);
+				}
+			});
 		},
 	}),
 	logger,

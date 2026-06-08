@@ -347,7 +347,25 @@ export class DocumentStore {
 		}
 		return false;
 	}
+
+	/** Delete a document and all of its chunks from the vector store and maps. */
+	async deleteDocument(documentId: string): Promise<boolean> {
+		const doc = this.documents.get(documentId);
+		if (!doc) return false;
+
+		const chunks = this.chunksByDoc.get(documentId) ?? [];
+		const chunkIds = chunks.map((c) => c.id);
+
+		if (chunkIds.length > 0) {
+			await this.vectorStore.deleteBatch(chunkIds);
+		}
+
+		this.documents.delete(documentId);
+		this.chunksByDoc.delete(documentId);
+		return true;
+	}
 }
+
 
 // ── Helpers ───────────────────────────────────────────────────────
 
