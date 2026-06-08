@@ -2,17 +2,16 @@
 
 import React from "react";
 import { useAgents } from "../hooks/useAgents";
-import SchedulerCard from "./SchedulerCard";
+import StrategicOutputCard from "./StrategicOutputCard";
 
 export default function AgentStatusPanel() {
   const {
     agentsStatus,
     selectedAgentId,
     setSelectedAgentId,
-    schedulerConfirmed,
-    schedulerDeclined,
-    handleConfirmMeeting,
-    handleDeclineMeeting,
+    presentations,
+    isPresentationLoading,
+    fetchPresentations,
   } = useAgents();
 
   return (
@@ -58,13 +57,12 @@ export default function AgentStatusPanel() {
               </div>
 
               {/* Sub-panels based on agent type */}
-              {index === 4 && ( // Scheduler Agent Panel
+              {index === 4 && ( // Strategic Output Agent Panel
                 <div onClick={(e) => e.stopPropagation()}>
-                  <SchedulerCard
-                    schedulerConfirmed={schedulerConfirmed}
-                    schedulerDeclined={schedulerDeclined}
-                    onConfirm={handleConfirmMeeting}
-                    onDecline={handleDeclineMeeting}
+                  <StrategicOutputCard
+                    presentations={presentations}
+                    isPresentationLoading={isPresentationLoading}
+                    onRefresh={fetchPresentations}
                   />
                 </div>
               )}

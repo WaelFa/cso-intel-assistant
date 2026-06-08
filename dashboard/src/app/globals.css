@@ -414,135 +414,107 @@ h6 {
   letter-spacing: 0;
 }
 
-/* Scheduler / Comms Panel inside card */
-.scheduler-panel {
+/* Strategic Output Panel inside card */
+.strategic-output-panel {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #f1f5f9;
 }
-.scheduler-panel h4 {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-.scheduler-panel p {
-  font-size: 10px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-  line-height: 1.4;
-}
-.meeting-client-box {
-  margin-top: 12px;
-  padding: 12px;
-  background-color: #f8fafc;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-}
-.meeting-client-header {
+.strategic-output-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 8px;
 }
-.meeting-client-header span {
+.strategic-output-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.starting-badge {
-  font-size: 8px;
-  padding: 2px 6px;
-  border-radius: 9999px;
-  background-color: #fce7f3;
-  color: #db2777;
   font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
 }
-.meeting-details {
+.strategic-output-refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.strategic-output-refresh-btn:hover {
+  border-color: var(--color-blue);
+  color: var(--color-blue);
+  background: var(--color-blue-glow);
+}
+.strategic-output-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.strategic-output-empty {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  padding: 8px 0 4px;
+  font-style: italic;
+}
+.strategic-output-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 8px;
 }
-.meeting-detail-item {
+.strategic-output-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 9px;
-  color: var(--text-secondary);
-}
-.meeting-pills-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
-.meeting-pill {
-  font-size: 8px;
-  padding: 2px 6px;
-  border-radius: 9999px;
-  background-color: #e2e8f0;
-  color: var(--text-secondary);
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.meeting-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-.confirm-button {
-  flex: 1;
-  padding: 6px 0;
-  background-color: #0f172a;
-  color: #ffffff;
-  border-radius: 8px;
-  border: none;
-  font-size: 10px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.confirm-button:hover {
-  background-color: #1e293b;
-}
-.decline-button {
-  flex: 1;
-  padding: 6px 0;
-  background-color: #ffffff;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.decline-button:hover {
+  justify-content: space-between;
+  padding: 8px 10px;
   background-color: #f8fafc;
+  border: 1px solid #e8ecf1;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
 }
-.status-card-success {
-  padding: 10px;
-  background-color: #ecfdf5;
-  border-radius: 12px;
-  border: 1px solid #a7f3d0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #065f46;
-  font-size: 10px;
-  font-weight: 700;
+.strategic-output-item:hover {
+  border-color: var(--color-orange);
+  background-color: var(--color-orange-light);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.1);
 }
-.status-card-declined {
-  padding: 10px;
-  background-color: #fef2f2;
-  border-radius: 12px;
-  border: 1px solid #fca5a5;
+.strategic-output-item-info {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #991b1b;
-  font-size: 10px;
-  font-weight: 700;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.strategic-output-item-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: capitalize;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strategic-output-item-meta {
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.strategic-output-download-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+.strategic-output-item:hover .strategic-output-download-icon {
+  color: var(--color-orange);
 }
 
 /* Sparklines card */

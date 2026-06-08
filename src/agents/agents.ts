@@ -25,6 +25,7 @@ import {
 	createDocumentUploadTool,
 	dailyBriefingTool,
 	draftContentTool,
+	generatePresentationTool,
 	marketIntelligenceTool,
 	performanceMetricsTool,
 	regulatoryTrackerTool,
@@ -96,18 +97,20 @@ export function createCompetitorIntelAgent({ model }: AgentDeps) {
 }
 
 /**
- * Executive Communications sub-agent.
+ * Strategic Output Agent (formerly Executive Communications).
  * Drafts board papers, memos, talking points, and presentations.
+ * Also generates real downloadable McKinsey-style .pptx decks.
  *
- * Tools: draft_executive_content (returns a structured scaffold the
- *        agent then fills with prose).
+ * Tools:
+ *   - draft_executive_content (structured scaffold the agent fills with prose)
+ *   - generate_strategic_presentation (real .pptx file generation)
  */
 export function createExecCommsAgent({ model }: AgentDeps) {
 	return new Agent({
 		name: "executive-communications",
 		instructions: EXEC_COMMS_PROMPT,
 		model,
-		tools: [draftContentTool],
+		tools: [draftContentTool, generatePresentationTool],
 		maxSteps: AGENT_MAX_STEPS,
 	});
 }

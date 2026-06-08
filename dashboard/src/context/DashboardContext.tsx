@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 
 // Types matching backend models
 export interface StoredDocument {
@@ -78,6 +78,14 @@ export interface AgentStatus {
   sparkline?: number[];
 }
 
+export interface GeneratedPresentation {
+  id: string;
+  fileName: string;
+  sizeBytes: number;
+  generatedAt: string;
+  downloadUrl: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -93,7 +101,7 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   "market-intelligence": "Market Intelligence",
   "regulatory-intelligence": "Regulatory Intelligence",
   "competitive-intelligence": "Competitive Intelligence",
-  "executive-communications": "Executive Communications",
+  "executive-communications": "Strategic Output",
   "cso-intel-assistant": "Core Intelligence",
 };
 
@@ -124,10 +132,11 @@ export const SELECTED_AGENT_CAPABILITIES: Record<string, string[]> = {
     "Analyze competitor partnerships, MOUs, and expansion plans"
   ],
   "executive-communications": [
+    "Generate McKinsey-style PowerPoint presentations (.pptx)",
     "Draft formal Board Papers and C-suite strategy briefs",
     "Create talking points and presentation structures for executive sessions",
-    "Draft talking points on our competitiveness strategy",
-    "Automate calendar invites and action plan timelines"
+    "Support SCR, SWOT, and Executive Summary deck frameworks",
+    "Draft memos, stakeholder updates, and briefing packs"
   ]
 };
 
@@ -152,9 +161,10 @@ export const SELECTED_AGENT_PROMPTS: Record<string, string[]> = {
     "Analyse Luxembourg's fund domiciliation strategy and threat level"
   ],
   "executive-communications": [
+    "Generate a presentation on our digital assets strategy",
+    "Create a SWOT deck comparing our positioning vs Singapore and ADGM",
     "Draft a board paper summarizing recent competitive intelligence findings",
-    "Draft an executive briefing memo on GCC market flows",
-    "Draft talking points on our competitiveness strategy for next board meet"
+    "Draft an executive briefing memo on GCC market flows"
   ]
 };
 
@@ -213,14 +223,13 @@ interface DashboardContextProps {
   fetchSettings: () => Promise<void>;
   saveSettings: (partial: Partial<AppSettings>) => Promise<boolean>;
 
-  // Scheduler / Sub-Agents States & Actions
+  // Strategic Output / Sub-Agents States & Actions
   agentsStatus: AgentStatus[];
   selectedAgentId: string | null;
   setSelectedAgentId: (id: string | null) => void;
-  schedulerConfirmed: boolean;
-  schedulerDeclined: boolean;
-  handleConfirmMeeting: () => void;
-  handleDeclineMeeting: () => void;
+  presentations: GeneratedPresentation[];
+  isPresentationLoading: boolean;
+  fetchPresentations: () => Promise<void>;
   animateSubAgents: (text: string) => void;
   resetAgentStatuses: () => void;
   updateAgentMetrics: (agentId: string, outputData: any) => void;
@@ -295,9 +304,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [isSettingsSaving, setIsSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
-  // Scheduler Agent Card Simulated State
-  const [schedulerConfirmed, setSchedulerConfirmed] = useState(false);
-  const [schedulerDeclined, setSchedulerDeclined] = useState(false);
+  // Strategic Output Agent State — Presentations
+  const [presentations, setPresentations] = useState<GeneratedPresentation[]>([]);
+  const [isPresentationLoading, setIsPresentationLoading] = useState(false);
 
   // Selected Agent for Detail Side Drawer
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -348,11 +357,11 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     },
     {
       id: "executive-communications",
-      name: "Scheduler Agent",
-      role: "Calendar & Executive Copy",
-      status: "Pending Confirmation",
+      name: "Strategic Output",
+      role: "Presentations & Executive Copy",
+      status: "Idle",
       dotColor: "bg-amber-500",
-      description: "Drafts papers and coordinates ops",
+      description: "Generates decks, papers, and memos",
       iconColor: "#f59e0b",
     },
   ]);
@@ -364,6 +373,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     fetchAgentConfigs();
     fetchPreparedBriefing();
     fetchSettings();
+    fetchPresentations();
   }, []);
 
   const fetchDocuments = async () => {
@@ -377,6 +387,21 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       console.error("Failed to load documents:", err);
     }
   };
+
+  const fetchPresentations = useCallback(async () => {
+    setIsPresentationLoading(true);
+    try {
+      const res = await fetch("http://localhost:3141/api/presentations");
+      if (res.ok) {
+        const data = await res.json();
+        setPresentations(data);
+      }
+    } catch (err) {
+      console.error("Failed to load presentations:", err);
+    } finally {
+      setIsPresentationLoading(false);
+    }
+  }, []);
 
   const fetchAgentConfigs = async () => {
     try {
@@ -596,9 +621,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     if (
       lower.includes("draft") ||
       lower.includes("memo") ||
-      lower.includes("board paper")
+      lower.includes("board paper") ||
+      lower.includes("presentation") ||
+      lower.includes("deck") ||
+      lower.includes("slides") ||
+      lower.includes("pptx") ||
+      lower.includes("powerpoint")
     ) {
-      activeStates[4].status = "Drafting...";
+      activeStates[4].status = "Generating...";
       activeStates[4].dotColor = "bg-amber-500 status-dot-pulse";
     }
 
@@ -613,28 +643,17 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setAgentsStatus((prev) =>
       prev.map((agent, idx) => ({
         ...agent,
-        status:
-          idx === 4
-            ? schedulerConfirmed
-              ? "Starting"
-              : schedulerDeclined
-                ? "Declined"
-                : "Pending Confirmation"
-            : "Idle",
+        status: "Idle",
         dotColor:
-          idx === 4
-            ? schedulerConfirmed
-              ? "bg-emerald-500"
-              : schedulerDeclined
-                ? "bg-red-500"
-                : "bg-amber-500"
-            : idx === 0
-              ? "bg-blue-500"
-              : idx === 1
-                ? "bg-purple-500"
-                : idx === 2
-                  ? "bg-blue-400"
-                  : "bg-emerald-500",
+          idx === 0
+            ? "bg-blue-500"
+            : idx === 1
+              ? "bg-purple-500"
+              : idx === 2
+                ? "bg-blue-400"
+                : idx === 3
+                  ? "bg-emerald-500"
+                  : "bg-amber-500",
       }))
     );
   };
@@ -861,6 +880,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                   statusMsg = "Analyzing strategic risks and threat parameters...";
                 } else if (toolName === "get_performance_metrics") {
                   statusMsg = "Retrieving key performance metric details...";
+                } else if (toolName === "generate_strategic_presentation") {
+                  statusMsg = "Generating McKinsey-style presentation deck...";
                 } else if (sub) {
                   const disp = AGENT_DISPLAY_NAMES[sub] || sub;
                   statusMsg = `Consulting ${disp} Specialist Agent...`;
@@ -912,6 +933,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                   const toolName = eventData.toolName;
                   if (toolName === "generate_daily_briefing") {
                     updateAgentMetrics("cso-intel-assistant", out);
+                  }
+                  if (toolName === "generate_strategic_presentation") {
+                    // Auto-refresh the presentations list when a new deck is generated
+                    fetchPresentations();
                   }
                 }
               }
@@ -986,66 +1011,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       setActiveToolStatus("");
       resetAgentStatuses();
     }
-  };
-
-  const handleConfirmMeeting = () => {
-    setSchedulerConfirmed(true);
-    setSchedulerDeclined(false);
-
-    setAgentsStatus((prev) =>
-      prev.map((agent, i) => {
-        if (i === 4) {
-          return {
-            ...agent,
-            status: "Starting",
-            dotColor: "bg-emerald-500",
-          };
-        }
-        return agent;
-      })
-    );
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `scheduler-confirm-${Date.now()}`,
-        role: "assistant",
-        content:
-          "✅ **Meeting Schedule Confirmed**: I have updated calendar invites for the proposed meeting client session on **Tue, Apr 16 (10:00 AM - 10:45 AM)**. Notifications have been dispatched to John Doe and the 2 other invitees.",
-        timestamp: new Date(),
-        agentName: "Scheduler Agent",
-      },
-    ]);
-  };
-
-  const handleDeclineMeeting = () => {
-    setSchedulerConfirmed(false);
-    setSchedulerDeclined(true);
-
-    setAgentsStatus((prev) =>
-      prev.map((agent, i) => {
-        if (i === 4) {
-          return {
-            ...agent,
-            status: "Declined",
-            dotColor: "bg-red-500",
-          };
-        }
-        return agent;
-      })
-    );
-
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `scheduler-decline-${Date.now()}`,
-        role: "assistant",
-        content:
-          "❌ **Meeting Proposed Declined**: The calendar reservation has been released, and the scheduler has been instructed to source alternative timeslots matching your preferences.",
-        timestamp: new Date(),
-        agentName: "Scheduler Agent",
-      },
-    ]);
   };
 
   const executePillAction = (actionText: string) => {
@@ -1194,10 +1159,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         agentsStatus,
         selectedAgentId,
         setSelectedAgentId,
-        schedulerConfirmed,
-        schedulerDeclined,
-        handleConfirmMeeting,
-        handleDeclineMeeting,
+        presentations,
+        isPresentationLoading,
+        fetchPresentations,
         animateSubAgents,
         resetAgentStatuses,
         updateAgentMetrics,

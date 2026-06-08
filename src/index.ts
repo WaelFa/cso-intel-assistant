@@ -15,6 +15,8 @@
 // ──────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { InMemoryVectorAdapter, Memory, VoltAgent } from "@voltagent/core";
 import { LibSQLMemoryAdapter } from "@voltagent/libsql";
@@ -275,6 +277,78 @@ new VoltAgent({
 							success: false,
 							error: err instanceof Error ? err.message : String(err),
 						},
+						500,
+					);
+				}
+			});
+
+			// ── Presentations ────────────────────────────────────────
+			// List all generated presentations with metadata.
+			const PRESENTATIONS_DIR = resolve("./data/presentations");
+
+			app.get("/api/presentations", (c) => {
+				try {
+					if (!existsSync(PRESENTATIONS_DIR)) {
+						return c.json([]);
+					}
+					const files = readdirSync(PRESENTATIONS_DIR)
+						.filter((f) => f.endsWith(".pptx"))
+						.map((fileName) => {
+							const filePath = join(PRESENTATIONS_DIR, fileName);
+							const stats = statSync(filePath);
+							// Extract the ID from the filename: topic-slug-pres-TIMESTAMP-RANDOM.pptx
+							const idMatch = fileName.match(/(pres-\d+-[a-z0-9]+)\.pptx$/);
+							const id = idMatch ? idMatch[1] : fileName.replace(".pptx", "");
+							return {
+								id,
+								fileName,
+								sizeBytes: stats.size,
+								generatedAt: stats.birthtime.toISOString(),
+								downloadUrl: `/api/presentations/${id}/download`,
+							};
+						})
+						.sort(
+							(a, b) =>
+								new Date(b.generatedAt).getTime() -
+								new Date(a.generatedAt).getTime(),
+						);
+					return c.json(files);
+				} catch (err) {
+					return c.json(
+						{ error: err instanceof Error ? err.message : String(err) },
+						500,
+					);
+				}
+			});
+
+			// Download a specific presentation by ID.
+			app.get("/api/presentations/:id/download", (c) => {
+				try {
+					const id = c.req.param("id");
+					if (!existsSync(PRESENTATIONS_DIR)) {
+						return c.json({ error: "No presentations found" }, 404);
+					}
+					const files = readdirSync(PRESENTATIONS_DIR);
+					const match = files.find(
+						(f) => f.includes(id) && f.endsWith(".pptx"),
+					);
+					if (!match) {
+						return c.json({ error: "Presentation not found" }, 404);
+					}
+					const filePath = join(PRESENTATIONS_DIR, match);
+					const fileBuffer = readFileSync(filePath);
+					return new Response(fileBuffer, {
+						status: 200,
+						headers: {
+							"Content-Type":
+								"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+							"Content-Disposition": `attachment; filename="${match}"`,
+							"Content-Length": String(fileBuffer.length),
+						},
+					});
+				} catch (err) {
+					return c.json(
+						{ error: err instanceof Error ? err.message : String(err) },
 						500,
 					);
 				}

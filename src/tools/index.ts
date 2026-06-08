@@ -32,3 +32,4 @@ export { performanceMetricsTool } from "./performance-metrics.js";
 export { draftContentTool } from "./draft-content.js";
 export { createDocumentUploadTool } from "./document-upload.js";
 export { createDocumentRetrievalTool } from "./document-retrieval.js";
+export { generatePresentationTool } from "./generate-presentation.js";
