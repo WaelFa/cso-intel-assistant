@@ -7,6 +7,9 @@ export function useBriefing() {
     briefingFilter,
     fetchBriefing,
     handleBriefingFilterChange,
+    preparedRecord,
+    refreshPreparedBriefing,
+    markBriefingSeen,
   } = useDashboard();
 
   return {
@@ -15,5 +18,8 @@ export function useBriefing() {
     briefingFilter,
     fetchBriefing,
     handleBriefingFilterChange,
+    preparedRecord,
+    refreshPreparedBriefing,
+    markBriefingSeen,
   };
 }

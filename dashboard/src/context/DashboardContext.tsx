@@ -18,6 +18,8 @@ export interface BriefingItem {
   summary: string;
   source: string;
   domain: "market" | "regulatory" | "competitive" | "risk";
+  url?: string;
+  isLive?: boolean;
 }
 
 export interface KPIItem {
@@ -35,6 +37,27 @@ export interface BriefingData {
   monitoring: BriefingItem[];
   opportunities: BriefingItem[];
   kpis: KPIItem[];
+}
+
+export interface PreparedBriefingRecord {
+  date: string;
+  preparedAt: string;
+  preparedBy: "overnight-cron" | "manual-refresh" | "boot-recovery";
+  focus: string;
+  isLive: boolean;
+  executedMs: number;
+  sources: {
+    market: { attempted: boolean; isLive: boolean; error?: string };
+    competitor: { attempted: boolean; isLive: boolean; error?: string };
+    regulatory: { attempted: boolean; isLive: boolean; error?: string };
+  };
+  briefing: BriefingData;
+}
+
+export interface AppSettings {
+  briefingCron: string;
+  briefingTimezone: string;
+  updatedAt?: string;
 }
 
 export interface LiveSource {
@@ -173,10 +196,22 @@ interface DashboardContextProps {
   briefingFilter: "all" | "market" | "regulatory" | "competitive" | "risk";
   fetchBriefing: (focus?: string) => Promise<void>;
   handleBriefingFilterChange: (filter: "all" | "market" | "regulatory" | "competitive" | "risk") => void;
+  // Prepared-snapshot path (the fast "today" read) + bell indicator
+  preparedRecord: PreparedBriefingRecord | null;
+  hasUnseenBriefing: boolean;
+  markBriefingSeen: () => void;
+  refreshPreparedBriefing: () => Promise<void>;
 
   // Configuration States & Actions
   systemPrompts: Record<string, string>;
   fetchAgentConfigs: () => Promise<void>;
+  // User-tunable settings (cron schedule for the overnight briefing)
+  settings: AppSettings | null;
+  isSettingsLoading: boolean;
+  isSettingsSaving: boolean;
+  settingsError: string | null;
+  fetchSettings: () => Promise<void>;
+  saveSettings: (partial: Partial<AppSettings>) => Promise<boolean>;
 
   // Scheduler / Sub-Agents States & Actions
   agentsStatus: AgentStatus[];
@@ -192,6 +227,24 @@ interface DashboardContextProps {
 }
 
 const DashboardContext = createContext<DashboardContextProps | undefined>(undefined);
+
+// Filter the prepared briefing in-memory by the selected focus.
+// Mirrors the logic in src/tools/daily-briefing.ts so the dashboard
+// shows the same filtered view without a network call.
+function applyFocusFilter(
+  briefing: BriefingData,
+  focus: string,
+): BriefingData {
+  if (focus === "all" || !focus) return briefing;
+  const matchesDomain = (item: { domain: string }) => item.domain === focus;
+  return {
+    ...briefing,
+    critical: briefing.critical.filter(matchesDomain),
+    monitoring: briefing.monitoring.filter(matchesDomain),
+    opportunities: briefing.opportunities.filter(matchesDomain),
+    kpis: focus === "market" || focus === "all" ? briefing.kpis : [],
+  };
+}
 
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
   // Chat States
@@ -228,8 +281,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     "all" | "market" | "regulatory" | "competitive" | "risk"
   >("all");
 
+  // Prepared briefing snapshot (from /api/briefing/today) — the fast
+  // read that backs the "Daily Briefings" tab. Separate from
+  // `briefing` so that switching the focus filter does not wipe
+  // the cached snapshot.
+  const [preparedRecord, setPreparedRecord] = useState<PreparedBriefingRecord | null>(null);
+  const [hasUnseenBriefing, setHasUnseenBriefing] = useState(false);
+
   // Settings Configuration States
   const [systemPrompts, setSystemPrompts] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [isSettingsLoading, setIsSettingsLoading] = useState(false);
+  const [isSettingsSaving, setIsSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   // Scheduler Agent Card Simulated State
   const [schedulerConfirmed, setSchedulerConfirmed] = useState(false);
@@ -298,6 +362,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     fetchDocuments();
     fetchBriefing();
     fetchAgentConfigs();
+    fetchPreparedBriefing();
+    fetchSettings();
   }, []);
 
   const fetchDocuments = async () => {
@@ -337,6 +403,17 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const fetchBriefing = async (focus: string = "all") => {
     setIsBriefingLoading(true);
     try {
+      // Fast path: if we have a prepared snapshot in memory, just
+      // re-apply the focus filter locally. No network call needed.
+      // This is the new default — the dashboard's briefing tab
+      // renders the cron-prepared snapshot, not a fresh tool call.
+      if (preparedRecord && focus === briefingFilter) {
+        setBriefing(applyFocusFilter(preparedRecord.briefing, focus));
+        return;
+      }
+      // If we don't have a prepared snapshot yet (e.g. the cron
+      // hasn't run and the user just opened the tab), fall back to
+      // the live tool endpoint so the panel isn't blank.
       const res = await fetch(
         "http://localhost:3141/tools/generate_daily_briefing/execute",
         {
@@ -358,7 +435,127 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const handleBriefingFilterChange = (filter: typeof briefingFilter) => {
     setBriefingFilter(filter);
-    fetchBriefing(filter);
+    // Re-derive the visible briefing from the prepared snapshot
+    // (instant, no network). Falls through to the live tool path
+    // only if no snapshot exists.
+    if (preparedRecord) {
+      setBriefing(applyFocusFilter(preparedRecord.briefing, filter));
+    } else {
+      fetchBriefing(filter);
+    }
+  };
+
+  // ── Prepared-snapshot (fast read) + bell state ────────────────
+  //
+  // Reads the prepared snapshot the cron job writes to disk. This is
+  // what the dashboard actually renders in the "Daily Briefings" tab.
+  // The localStorage-backed `lastSeenBriefingAt` drives the bell:
+  // when the cron publishes a new snapshot whose `preparedAt` is
+  // newer than what the user last saw, the bell badge appears on the
+  // sidebar's "Daily Briefings" entry. Clicking that entry (or the
+  // bell) clears the localStorage key so the badge disappears.
+
+  const BRIEFING_LAST_SEEN_KEY = "cso.briefings.lastSeenPreparedAt";
+
+  const fetchPreparedBriefing = async () => {
+    try {
+      const res = await fetch("http://localhost:3141/api/briefing/today");
+      if (res.ok) {
+        const data = await res.json();
+        const record = data.success && data.record ? (data.record as PreparedBriefingRecord) : null;
+        setPreparedRecord(record);
+        if (record) {
+          // The briefing tab renders the prepared snapshot. Apply
+          // the user's current focus filter on top of it so the
+          // visible state matches the filter buttons.
+          setBriefing(applyFocusFilter(record.briefing, briefingFilter));
+          // Decide whether to show the bell. We compare against the
+          // stored "last seen preparedAt" and show the bell if the
+          // prepared snapshot is newer (or there's no record at all).
+          try {
+            const lastSeen = window.localStorage.getItem(BRIEFING_LAST_SEEN_KEY);
+            if (!lastSeen || lastSeen < record.preparedAt) {
+              setHasUnseenBriefing(true);
+            } else {
+              setHasUnseenBriefing(false);
+            }
+          } catch {
+            // localStorage unavailable — show the bell to be safe.
+            setHasUnseenBriefing(true);
+          }
+        }
+      } else if (res.status === 404) {
+        setPreparedRecord(null);
+        setHasUnseenBriefing(false);
+      }
+    } catch (err) {
+      console.error("Failed to load prepared briefing:", err);
+    }
+  };
+
+  const markBriefingSeen = () => {
+    if (preparedRecord) {
+      try {
+        window.localStorage.setItem(BRIEFING_LAST_SEEN_KEY, preparedRecord.preparedAt);
+      } catch {
+        // localStorage unavailable — keep UI state in memory.
+      }
+    }
+    setHasUnseenBriefing(false);
+  };
+
+  // Re-fetch and recompute bell state. Called by the briefing panel
+  // after a manual refresh so a brand-new snapshot lights up the
+  // bell again.
+  const refreshPreparedBriefing = async () => {
+    setHasUnseenBriefing(true);
+    await fetchPreparedBriefing();
+  };
+
+  // ── Settings fetch / save ──────────────────────────────────────
+
+  const fetchSettings = async () => {
+    setIsSettingsLoading(true);
+    setSettingsError(null);
+    try {
+      const res = await fetch("http://localhost:3141/api/settings");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.settings) {
+          setSettings(data.settings as AppSettings);
+        }
+      } else {
+        setSettingsError(`Failed to load settings (HTTP ${res.status})`);
+      }
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSettingsLoading(false);
+    }
+  };
+
+  const saveSettings = async (partial: Partial<AppSettings>): Promise<boolean> => {
+    setIsSettingsSaving(true);
+    setSettingsError(null);
+    try {
+      const res = await fetch("http://localhost:3141/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(partial),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setSettings(data.settings as AppSettings);
+        return true;
+      }
+      setSettingsError(data.error ?? `HTTP ${res.status}`);
+      return false;
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setIsSettingsSaving(false);
+    }
   };
 
   const animateSubAgents = (text: string) => {
@@ -980,9 +1177,19 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         briefingFilter,
         fetchBriefing,
         handleBriefingFilterChange,
+        preparedRecord,
+        hasUnseenBriefing,
+        markBriefingSeen,
+        refreshPreparedBriefing,
 
         systemPrompts,
         fetchAgentConfigs,
+        settings,
+        isSettingsLoading,
+        isSettingsSaving,
+        settingsError,
+        fetchSettings,
+        saveSettings,
 
         agentsStatus,
         selectedAgentId,

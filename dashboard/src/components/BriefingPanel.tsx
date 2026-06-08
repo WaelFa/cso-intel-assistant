@@ -1,8 +1,30 @@
 "use client";
 
 import React from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, RefreshCw, Radio, AlertTriangle } from "lucide-react";
 import { useBriefing } from "../hooks/useBriefing";
+
+function formatTimestamp(iso: string | undefined): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function ageInHours(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const diff = Date.now() - new Date(iso).getTime();
+  return Math.round(diff / (1000 * 60 * 60));
+}
 
 export default function BriefingPanel() {
   const {
@@ -11,7 +33,31 @@ export default function BriefingPanel() {
     briefingFilter,
     fetchBriefing,
     handleBriefingFilterChange,
+    preparedRecord,
+    refreshPreparedBriefing,
   } = useBriefing();
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetch("http://localhost:3141/api/briefing/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ focus: briefingFilter }),
+      });
+      await refreshPreparedBriefing();
+      await fetchBriefing(briefingFilter);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const preparedAt = preparedRecord?.preparedAt;
+  const isLive = preparedRecord?.isLive;
+  const hoursOld = ageInHours(preparedAt);
+  const isStale = hoursOld !== null && hoursOld > 24;
+  const preparedBy = preparedRecord?.preparedBy;
 
   return (
     <div className="briefing-tab-view">
@@ -21,11 +67,11 @@ export default function BriefingPanel() {
           <p>Aggregated regulatory changes, market flows, and competitor SWOT indices</p>
         </div>
         <button
-          onClick={() => fetchBriefing(briefingFilter)}
-          disabled={isBriefingLoading}
+          onClick={onRefresh}
+          disabled={isBriefingLoading || isRefreshing}
           className="refresh-button"
         >
-          {isBriefingLoading ? (
+          {isBriefingLoading || isRefreshing ? (
             <Loader2 size={14} className="animate-spin" />
           ) : (
             <RefreshCw size={14} />
@@ -33,6 +79,81 @@ export default function BriefingPanel() {
           Refresh Briefing
         </button>
       </header>
+
+      {/* Provenance strip — shows the user when this snapshot was
+          prepared, by whom, and whether it was a live or fallback
+          generation. Renders even when there is no briefing yet, so
+          a CSO opening the app at 7:45am sees "Prepared 7:40am (overnight-cron)". */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "10px 14px",
+          marginBottom: 16,
+          backgroundColor: preparedRecord
+            ? isLive
+              ? "rgba(16, 185, 129, 0.06)"
+              : "rgba(245, 158, 11, 0.06)"
+            : "rgba(239, 68, 68, 0.04)",
+          border: `1px solid ${
+            preparedRecord
+              ? isLive
+                ? "rgba(16, 185, 129, 0.25)"
+                : "rgba(245, 158, 11, 0.25)"
+              : "rgba(239, 68, 68, 0.2)"
+          }`,
+          borderRadius: 12,
+          fontSize: 12,
+          color: "var(--text-secondary)",
+          flexWrap: "wrap",
+        }}
+      >
+        {preparedRecord ? (
+          <>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontWeight: 700,
+                color: isLive ? "#059669" : "#b45309",
+              }}
+            >
+              {isLive ? <Radio size={12} /> : <AlertTriangle size={12} />}
+              {isLive ? "Live snapshot" : "Curated fallback"}
+            </span>
+            <span>·</span>
+            <span>
+              <strong>Prepared:</strong> {formatTimestamp(preparedAt)}
+            </span>
+            {hoursOld !== null ? (
+              <>
+                <span>·</span>
+                <span style={{ color: isStale ? "#b91c1c" : "var(--text-muted)" }}>
+                  {hoursOld === 0 ? "fresh" : `${hoursOld}h old`}
+                </span>
+              </>
+            ) : null}
+            {preparedBy ? (
+              <>
+                <span>·</span>
+                <span style={{ color: "var(--text-muted)" }}>via {preparedBy.replace("-", " ")}</span>
+              </>
+            ) : null}
+            {isStale ? (
+              <span style={{ marginLeft: "auto", color: "#b91c1c", fontWeight: 600 }}>
+                Stale — consider refreshing
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span style={{ fontStyle: "italic", color: "var(--text-muted)" }}>
+            No prepared briefing for today. The next scheduled run will populate this view, or click
+            Refresh Briefing to generate one now.
+          </span>
+        )}
+      </div>
 
       {isBriefingLoading && !briefing ? (
         <div

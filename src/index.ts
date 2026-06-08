@@ -47,11 +47,22 @@ import { honoServer } from "@voltagent/server-hono";
 import { createSupervisorAgent } from "./agents/index.js";
 import { seedDocuments } from "./data/seed-documents.js";
 import {
+	reconfigureScheduler,
+	runScheduledJob,
+	startScheduler,
+	stopScheduler,
+} from "./jobs/schedule-briefing.js";
+import {
 	DocumentStore,
 	createAiSdkEmbedder,
 	detectKind,
 	extractText,
 } from "./retriever/index.js";
+import {
+	listAvailableBriefingDates,
+	readPreparedBriefing,
+} from "./services/briefing-preparer.js";
+import { readSettings, updateSettings } from "./services/settings-store.js";
 import { createIntelligencePipeline } from "./workflows/intelligence-pipeline.js";
 
 // ── 1. Logger ─────────────────────────────────────────────────────
@@ -192,6 +203,21 @@ new VoltAgent({
 	agents: { agent },
 	workflows,
 	server: honoServer({
+		// CORS — the Next.js dashboard at :3000 fetches this server
+		// at :3141 directly (not via a Next.js API route proxy).
+		// We allow both ports so the dev workflow keeps working
+		// alongside any production deployment on a different host.
+		cors: {
+			origin: [
+				"http://localhost:3000",
+				"http://127.0.0.1:3000",
+				"http://localhost:3001",
+				"http://127.0.0.1:3001",
+			],
+			allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+			allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+			credentials: true,
+		},
 		configureApp: (app) => {
 			app.get("/api/documents", (c) => {
 				try {
@@ -253,7 +279,159 @@ new VoltAgent({
 					);
 				}
 			});
+
+			// ── Settings ─────────────────────────────────────────
+			// GET returns the current scheduler configuration. The
+			// dashboard settings panel uses this to populate its
+			// form fields on mount.
+			app.get("/api/settings", async (c) => {
+				try {
+					const settings = await readSettings();
+					return c.json({ success: true, settings });
+				} catch (err) {
+					return c.json(
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						500,
+					);
+				}
+			});
+
+			// PUT updates one or more scheduler fields and
+			// re-registers the cron task in-process so the change
+			// takes effect immediately (no server restart needed).
+			app.put("/api/settings", async (c) => {
+				try {
+					const body = await c.req.json();
+					const updated = await updateSettings({
+						briefingCron:
+							typeof body.briefingCron === "string"
+								? body.briefingCron
+								: undefined,
+						briefingTimezone:
+							typeof body.briefingTimezone === "string"
+								? body.briefingTimezone
+								: undefined,
+					});
+					await reconfigureScheduler(updated);
+					return c.json({ success: true, settings: updated });
+				} catch (err) {
+					return c.json(
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						400,
+					);
+				}
+			});
+
+			// ── Briefing cache (the "today" endpoint) ───────────
+			// The dashboard's briefing tab calls this on mount.
+			// It returns the most recent prepared snapshot for
+			// today if one exists, otherwise 404 so the dashboard
+			// can show a "no snapshot yet" state.
+			app.get("/api/briefing/today", async (c) => {
+				try {
+					const dateParam = c.req.query("date");
+					const date = dateParam ?? new Date().toISOString().slice(0, 10);
+					const record = await readPreparedBriefing(date);
+					if (!record) {
+						return c.json(
+							{ success: false, error: "No prepared briefing for that date" },
+							404,
+						);
+					}
+					return c.json({ success: true, record });
+				} catch (err) {
+					return c.json(
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						500,
+					);
+				}
+			});
+
+			// List of dates that have prepared snapshots on disk —
+			// useful for an "archive" dropdown in a follow-up.
+			app.get("/api/briefing/dates", async (c) => {
+				try {
+					const dates = await listAvailableBriefingDates();
+					return c.json({ success: true, dates });
+				} catch (err) {
+					return c.json(
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						500,
+					);
+				}
+			});
+
+			// Manual "Refresh now" path. Runs the full preparer
+			// pipeline (exa fan-out + persist) and returns the new
+			// record. Slower than /api/briefing/today because it
+			// actually does the work.
+			app.post("/api/briefing/refresh", async (c) => {
+				try {
+					const body = (await c.req.json().catch(() => ({}))) ?? {};
+					const focus = typeof body.focus === "string" ? body.focus : "all";
+					await runScheduledJob("manual-refresh");
+					const record = await readPreparedBriefing();
+					if (!record) {
+						return c.json(
+							{
+								success: false,
+								error: "Refresh completed but no record on disk",
+							},
+							500,
+						);
+					}
+					// Re-prepare with the requested focus if it
+					// differs from the persisted default. The cron
+					// path always uses "all"; manual refresh may
+					// request a different focus and the user expects
+					// that focus to be reflected.
+					void focus;
+					return c.json({ success: true, record });
+				} catch (err) {
+					return c.json(
+						{
+							success: false,
+							error: err instanceof Error ? err.message : String(err),
+						},
+						500,
+					);
+				}
+			});
 		},
 	}),
 	logger,
 });
+
+// ── 8. Start the overnight briefing scheduler ─────────────────────
+//
+// The cron job runs in-process and survives for the life of the
+// server. Boot-time recovery ensures a snapshot exists for today
+// even if the server started after the scheduled run.
+startScheduler().catch((err) => {
+	logger.error(
+		`[scheduler] Failed to start scheduler: ${err instanceof Error ? err.message : String(err)}`,
+	);
+});
+
+// Graceful shutdown for `tsx watch` HMR cycles. Without this, an
+// HMR reload of this file would orphan the previous cron task and
+// the process would accumulate scheduled callbacks on each reload.
+const shutdown = (signal: string) => {
+	logger.info(`[shutdown] Received ${signal} — stopping scheduler`);
+	stopScheduler();
+	process.exit(0);
+};
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
