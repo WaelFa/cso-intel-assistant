@@ -102,16 +102,16 @@ export const AGENT_DISPLAY_NAMES: Record<string, string> = {
   "regulatory-intelligence": "Regulatory Intelligence",
   "competitive-intelligence": "Competitive Intelligence",
   "executive-communications": "Strategic Output",
-  "cso-intel-assistant": "Core Intelligence",
+  "cso-intel-assistant": "Jarvis",
 };
 
 export const SELECTED_AGENT_CAPABILITIES: Record<string, string[]> = {
   "cso-intel-assistant": [
-    "Orchestrate specialist sub-agents dynamically based on query context",
+    "Orchestrate specialist sub-agents dynamically based on what you ask",
     "Generate comprehensive daily intelligence briefings with KPIs",
-    "Assess core risk indicators across regulatory, market, and competitor domains",
-    "Ingest and vectorize uploaded strategy docs, minutes, and reports",
-    "Retrieve grounded citations from the RAG strategic database"
+    "Track risk indicators across regulatory, market, and competitive domains",
+    "Ingest and search your strategy docs, minutes, and reports",
+    "Recall prior conversations and the institutional knowledge base"
   ],
   "market-intelligence": [
     "Analyze global capital flow trends and FDI statistics",
@@ -233,6 +233,11 @@ interface DashboardContextProps {
   animateSubAgents: (text: string) => void;
   resetAgentStatuses: () => void;
   updateAgentMetrics: (agentId: string, outputData: any) => void;
+
+  // User identity (localStorage-backed, populated by OnboardingModal)
+  userName: string | null;
+  hasOnboarded: boolean;
+  setUserName: (name: string) => void;
 }
 
 const DashboardContext = createContext<DashboardContextProps | undefined>(undefined);
@@ -255,17 +260,56 @@ function applyFocusFilter(
   };
 }
 
+// ── stripThinkingLines ────────────────────────────────────────────
+// Safety net for the model occasionally leaking a planning prefix
+// (e.g. "The user wants me to delegate…", "I'll pass this through…",
+// "Let me present this cleanly to the user…") into the visible
+// stream despite the supervisor prompt telling it not to. We only
+// inspect the first 6 lines because the leak always appears at the
+// very start of the reply — we never want to clobber a mid-message
+// sentence that happens to start with "I".
+const THINKING_PREFIX_PATTERNS: RegExp[] = [
+  /^\s*the user (wants|is asking|asked|has asked|needs|just (said|sent|typed|asked))/i,
+  /^\s*i('ll| will| should| need to| am going to| have to| want to| want| aim to)/i,
+  /^\s*i('m| am) (going to|about to|thinking|planning|ready|here|standing|sitting)/i,
+  /^\s*let me (now |just |cleanly )?(present|present this|write|draft|summarize|pass|show|deliver|format|respond|reply|handle|take|start|begin|craft|prepare|address)/i,
+  /^\s*per (the |my )?instructions/i,
+  /^\s*as (the |configured |an? )?(strategic|cso|jarvis|assistant|trusted|chief|personal|ai)/i,
+  /^\s*now (i|let me|we)/i,
+  /^\s*the (market|regulatory|competitive|executive|strategic)[ -](intel|intelligence|output|communications) agent has returned/i,
+  /^\s*here('s| is) (the|what|my|a |an |how|why|where|when)/i,
+  /^\s*(the user just said|the user just sent|the user has sent|responding to the user|in response to (the user|this|that))/i,
+  /^\s*(this is (a |an )?(casual|formal|brief|short|quick)|keep it (brief|short|warm|simple|concise|focused))/i,
+];
+
+function stripThinkingLines(text: string): string {
+  const lines = text.split("\n");
+  let keptFrom = 0;
+  const window = Math.min(lines.length, 6);
+  for (let i = 0; i < window; i++) {
+    const line = lines[i].trim();
+    if (!line) {
+      // Blank line — keep walking; the real content often starts
+      // after a blank.
+      continue;
+    }
+    const isThinking = THINKING_PREFIX_PATTERNS.some((re) => re.test(line));
+    if (isThinking) {
+      keptFrom = i + 1;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(keptFrom).join("\n").trimStart();
+}
+
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
   // Chat States
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Good morning. I am your Strategic Intelligence Assistant. I am grounded in your institutional knowledge base and can orchestrate specialised market, regulatory, and competitive sub-agents to synthesize briefings, board memos, and risk assessments. \n\nHow can I support your strategy today?",
-      timestamp: new Date(),
-    },
-  ]);
+  // The chat thread starts empty. The personalized welcome intro
+  // lives in the ready view (orb + "Jarvis is ready") and is never
+  // injected as a message bubble — that used to pop up awkwardly
+  // above the user's first message.
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputVal, setInputVal] = useState("");
   const [isChatting, setIsChatting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -276,6 +320,44 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     () => `cso-session-${Math.random().toString(36).substring(2, 11)}`,
   );
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // ── User identity (localStorage-backed) ─────────────────────────
+  // The OnboardingModal reads `hasOnboarded` to decide whether to
+  // show itself on first visit, and calls `setUserName` once the
+  // user submits. We deliberately keep this in localStorage rather
+  // than the backend settings store so first-run UX works before
+  // any auth / settings round-trip is required.
+  const USER_NAME_KEY = "jarvis.userName";
+  const ONBOARDED_KEY = "jarvis.hasOnboarded";
+  const [userName, setUserNameState] = useState<string | null>(null);
+  const [hasOnboarded, setHasOnboarded] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      const storedName = window.localStorage.getItem(USER_NAME_KEY);
+      const storedOnboarded = window.localStorage.getItem(ONBOARDED_KEY);
+      if (storedName) setUserNameState(storedName);
+      // hasOnboarded is true only if the modal has actually been
+      // completed. Reading it lazily so SSR / no-localStorage
+      // environments don't crash.
+      setHasOnboarded(storedOnboarded === "true");
+    } catch {
+      // localStorage unavailable (private mode, etc.) — keep the
+      // onboarding modal available in-session only.
+    }
+  }, []);
+
+  const setUserName = (name: string) => {
+    const trimmed = name.trim();
+    setUserNameState(trimmed || null);
+    setHasOnboarded(true);
+    try {
+      if (trimmed) window.localStorage.setItem(USER_NAME_KEY, trimmed);
+      window.localStorage.setItem(ONBOARDED_KEY, "true");
+    } catch {
+      // best-effort persistence
+    }
+  };
 
   // Document Library States
   const [documents, setDocuments] = useState<StoredDocument[]>([]);
@@ -315,11 +397,11 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [agentsStatus, setAgentsStatus] = useState<AgentStatus[]>([
     {
       id: "cso-intel-assistant",
-      name: "Supervisor Agent",
-      role: "Core Intelligence",
+      name: "Jarvis",
+      role: "Strategic Intelligence",
       status: "Idle",
       dotColor: "bg-blue-500",
-      description: "Primary orchestrator and router",
+      description: "Primary orchestrator and your main point of contact",
       iconColor: "#3b82f6",
     },
     {
@@ -730,15 +812,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   };
 
   const handleClearChat = () => {
-    setMessages([
-      {
-        id: `welcome-${Date.now()}`,
-        role: "assistant",
-        content:
-          "Good morning. I am your Strategic Intelligence Assistant. I am grounded in your institutional knowledge base and can orchestrate specialised market, regulatory, and competitive sub-agents to synthesize briefings, board memos, and risk assessments. \n\nHow can I support your strategy today?",
-        timestamp: new Date(),
-      },
-    ]);
+    setMessages([]);
     setIsChatting(false);
   };
 
@@ -785,6 +859,11 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
     setActiveToolStatus("Orchestrating sub-agents...");
 
+    // Drop any pre-existing welcome message from the thread so the
+    // user's first message is the first thing they see. The welcome
+    // intro belongs to the ready view, not the chat history.
+    setMessages((prev) => prev.filter((m) => !m.id.startsWith("welcome")));
+
     const userMsg: Message = {
       id: `msg-${Date.now()}-user`,
       role: "user",
@@ -801,9 +880,20 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       role: "assistant",
       content: "",
       timestamp: new Date(),
-      agentName: "Core Intelligence",
+      agentName: "Jarvis",
     };
     setMessages((prev) => [...prev, newAssistantMsg]);
+
+    // Hoisted so the catch / finally can clear any pending debounce
+    // timer even if it never gets assigned. The timer is created
+    // later, inside the streaming loop.
+    let promoteTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearPromoteTimer = () => {
+      if (promoteTimer) {
+        clearTimeout(promoteTimer);
+        promoteTimer = null;
+      }
+    };
 
     try {
       const response = await fetch(
@@ -830,7 +920,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder("utf-8");
-      
+
       const stream: {
         buffer: string;
         content: string;
@@ -842,6 +932,61 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         buffer: "",
         content: "",
         toolCallToSubAgent: {},
+      };
+
+      // ── Promotion / debounce state ──────────────────────────────
+      // We keep accumulating text into `stream.content` but only
+      // push the *stripped* content into the visible message after
+      // a 600ms quiet period (or on stream end). This hides the
+      // model monologue that sometimes leaks at the start of a
+      // reply ("The user wants me to delegate…", "I'll pass this
+      // through…", etc.) — the user only sees the final answer.
+      let streamStripped = "";
+      // Coalesce identical status updates so the loading text
+      // doesn't flicker between the same value.
+      let lastStatus = "";
+
+      const PROMOTION_DELAY_MS = 600;
+
+      const promoteStream = (options?: { final?: boolean }) => {
+        const parsedCitations = extractCitations(streamStripped);
+        const nextContent = streamStripped;
+        const nextAgentName = stream.agentName;
+        const nextIsLive = stream.isLive;
+        const nextLiveSources = stream.liveSources;
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantMsgId) return m;
+            return {
+              ...m,
+              content: nextContent,
+              citations: parsedCitations,
+              agentName: nextAgentName ?? m.agentName,
+              isLive: nextIsLive ?? m.isLive,
+              liveSources: nextLiveSources ?? m.liveSources,
+            };
+          }),
+        );
+        if (options?.final) {
+          streamStripped = nextContent;
+        }
+      };
+
+      const schedulePromotion = () => {
+        clearPromoteTimer();
+        promoteTimer = setTimeout(() => {
+          promoteTimer = null;
+          promoteStream();
+        }, PROMOTION_DELAY_MS);
+      };
+
+      // Coalesce: only call setActiveToolStatus when the value
+      // actually changes. Prevents flicker when the same status is
+      // re-set across adjacent tool events.
+      const setStatus = (msg: string) => {
+        if (msg === lastStatus) return;
+        lastStatus = msg;
+        setActiveToolStatus(msg);
       };
 
       if (reader) {
@@ -863,12 +1008,21 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
               if (eventData.text) {
                 stream.content += eventData.text;
+                // Recompute the stripped view and schedule a
+                // promotion. While chunks are arriving, the
+                // debounce keeps resetting — we only push once the
+                // stream has been quiet for PROMOTION_DELAY_MS.
+                const nextStripped = stripThinkingLines(stream.content);
+                if (nextStripped !== streamStripped) {
+                  streamStripped = nextStripped;
+                  schedulePromotion();
+                }
               }
 
               if (eventData.type === "tool-call") {
                 const sub = eventData.subAgentName || eventData.executingAgentName;
                 const toolName = eventData.toolName;
-                
+
                 let statusMsg = "Orchestrating sub-agents...";
                 if (toolName === "generate_daily_briefing") {
                   statusMsg = "Compiling Daily Intelligence Briefing...";
@@ -886,7 +1040,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                   const disp = AGENT_DISPLAY_NAMES[sub] || sub;
                   statusMsg = `Consulting ${disp} Specialist Agent...`;
                 }
-                setActiveToolStatus(statusMsg);
+                setStatus(statusMsg);
 
                 if (sub && sub !== "cso-intel-assistant" && eventData.toolCallId) {
                   stream.toolCallToSubAgent[eventData.toolCallId] = sub;
@@ -897,7 +1051,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
               }
 
               if (eventData.type === "tool-result") {
-                setActiveToolStatus("Synthesizing tool response...");
+                setStatus("Synthesizing tool response...");
                 const out = eventData.output;
                 let producedLiveSources = false;
 
@@ -935,47 +1089,37 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                     updateAgentMetrics("cso-intel-assistant", out);
                   }
                   if (toolName === "generate_strategic_presentation") {
-                    // Auto-refresh the presentations list when a new deck is generated
                     fetchPresentations();
                   }
                 }
               }
 
+              // Metadata-only changes (agentName / isLive / liveSources)
+              // are pushed immediately so the message header reflects
+              // the right sub-agent as soon as a tool handoff happens.
+              // The text body keeps its debounced promotion path above.
               if (
-                eventData.text ||
                 stream.agentName ||
                 stream.isLive !== undefined ||
                 stream.liveSources
               ) {
-                const parsedCitations = extractCitations(stream.content);
-                const nextContent = stream.content;
-                const nextAgentName = stream.agentName;
-                const nextIsLive = stream.isLive;
-                const nextLiveSources = stream.liveSources;
-
-                setMessages((prev) =>
-                  prev.map((m) => {
-                    if (m.id === assistantMsgId) {
-                      return {
-                        ...m,
-                        content: nextContent,
-                        citations: parsedCitations,
-                        agentName: nextAgentName ?? m.agentName,
-                        isLive: nextIsLive ?? m.isLive,
-                        liveSources: nextLiveSources ?? m.liveSources,
-                      };
-                    }
-                    return m;
-                  })
-                );
+                promoteStream();
               }
             } catch {
               // Ignore partial JSON parsing errors
             }
           }
         }
+
+        // Stream closed — force one final promotion so the user sees
+        // the complete stripped content.
+        clearPromoteTimer();
+        promoteStream({ final: true });
       }
     } catch (err: any) {
+      // Make sure no debounced promotion fires after we've already
+      // handled the error / abort path.
+      clearPromoteTimer();
       if (err.name === "AbortError") {
         setMessages((prev) =>
           prev.map((m) => {
@@ -999,13 +1143,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
             return {
               ...m,
               content:
-                "Sorry, I encountered a connection issue while communicating with the Core Intelligence server. Please ensure the Hono backend on port 3141 is running.",
+                "Sorry — I couldn't reach the backend. Please make sure the Hono server is running on port 3141.",
             };
           }
           return m;
         })
       );
     } finally {
+      clearPromoteTimer();
       setIsGenerating(false);
       abortControllerRef.current = null;
       setActiveToolStatus("");
@@ -1165,6 +1310,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         animateSubAgents,
         resetAgentStatuses,
         updateAgentMetrics,
+
+        userName,
+        hasOnboarded,
+        setUserName,
       }}
     >
       {children}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Zap,
@@ -17,16 +17,72 @@ import {
   ChevronDown,
   Mic,
   FileText,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
+import { useUser } from "../hooks/useUser";
 import { AGENT_DISPLAY_NAMES } from "../context/DashboardContext";
+
+// Header time helpers — kept local to the chat panel because they're
+// only used in the welcome strip. Both run client-side only.
+function timeGreeting() {
+  const h = new Date().getHours();
+  if (h < 5) return "Working late";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function formatDate(d: Date) {
+  return d.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+}
+
+function formatTime(d: Date) {
+  return d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+// Build the welcome message body. Time-aware + personalized.
+// The "— J" sign-off matches the persona defined in the supervisor
+// prompt and is intentionally only used on the welcome line.
+function buildWelcomeMessage(name: string) {
+  const h = new Date().getHours();
+  const greeting =
+    h < 5
+      ? "Working late"
+      : h < 12
+        ? "Good morning"
+        : h < 18
+          ? "Good afternoon"
+          : "Good evening";
+  return `${greeting}, ${name}. I'm Jarvis — your strategic intelligence assistant.\n\nI can pull a fresh briefing, scan the regulatory horizon, benchmark us against peer centres, or draft a board paper. Tap a pellet below or just ask.`;
+}
 
 export default function ChatPanel() {
   const router = useRouter();
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Orb state: idle → thinking (when generating) → done (one-shot
+  // green flash when generation finishes). The "done" auto-clears
+  // so the orb settles back to idle.
+  const [orbState, setOrbState] = useState<"idle" | "thinking" | "done">(
+    "idle",
+  );
+  const prevGeneratingRef = useRef(false);
+
+  const { userName } = useUser();
+
   const {
     messages,
+    setMessages,
     inputVal,
     setInputVal,
     isChatting,
@@ -45,6 +101,38 @@ export default function ChatPanel() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isGenerating]);
 
+  // While the model is generating, we suppress the empty assistant
+  // bubble and show the loading panel instead. Once content arrives
+  // (after the debounce + strip pass in the context), the bubble
+  // renders normally.
+  const showLoadingPanel =
+    isGenerating &&
+    messages.length > 0 &&
+    messages[messages.length - 1]?.role === "assistant" &&
+    !messages[messages.length - 1]?.content;
+
+  // The welcome intro lives in the ready view (not in the chat
+  // thread) so we render the personalized greeting directly from
+  // `userName` below. No state syncing needed here.
+
+  // Drive the orb state machine. Only applies while the ready view
+  // is visible (no chat yet) — once the user has sent their first
+  // message, the orb is unmounted and this is a no-op.
+  useEffect(() => {
+    if (isGenerating) {
+      prevGeneratingRef.current = true;
+      setOrbState("thinking");
+      return;
+    }
+    if (prevGeneratingRef.current) {
+      prevGeneratingRef.current = false;
+      setOrbState("done");
+      const t = window.setTimeout(() => setOrbState("idle"), 1200);
+      return () => window.clearTimeout(t);
+    }
+    return undefined;
+  }, [isGenerating]);
+
   const parseTextWithLinks = (text: string) => {
     const mdLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
     let lastIndex = 0;
@@ -55,7 +143,11 @@ export default function ChatPanel() {
       const parts = str.split(/(\*\*.*?\*\*)/g);
       return parts.map((part, i) => {
         if (part.startsWith("**") && part.endsWith("**")) {
-          return <strong key={i} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+          return (
+            <strong key={i} style={{ fontWeight: 700 }}>
+              {part.slice(2, -2)}
+            </strong>
+          );
         }
         const urlRegex = /(https?:\/\/[^\s,;()]+)/g;
         const subParts = part.split(urlRegex);
@@ -71,7 +163,7 @@ export default function ChatPanel() {
                   color: "#2563eb",
                   textDecoration: "underline",
                   fontWeight: 600,
-                  wordBreak: "break-all"
+                  wordBreak: "break-all",
                 }}
               >
                 {subPart}
@@ -101,11 +193,11 @@ export default function ChatPanel() {
           style={{
             color: "#2563eb",
             textDecoration: "underline",
-            fontWeight: 600
+            fontWeight: 600,
           }}
         >
           {anchor}
-        </a>
+        </a>,
       );
 
       lastIndex = mdLinkRegex.lastIndex;
@@ -120,10 +212,13 @@ export default function ChatPanel() {
   };
 
   const formatMessageContent = (content: string) => {
-    const cleanText = content.replace(
-      /\[Source:\s*([^,\]]+),\s*chunk\s*(\d+),\s*relevance\s*([\d\.]+)\]/gi,
-      ""
-    );
+    const cleanText = content
+      .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+      .replace(
+        /\[Source:\s*([^,\]]+),\s*chunk\s*(\d+),\s*relevance\s*([\d\.]+)\]/gi,
+        "",
+      )
+      .trim();
 
     return cleanText.split("\n").map((line, i) => {
       let formattedLine: React.ReactNode = line;
@@ -141,7 +236,9 @@ export default function ChatPanel() {
         );
       } else if (line.startsWith("- ") || line.startsWith("* ")) {
         formattedLine = (
-          <li className="ml-5 list-disc my-1">{parseTextWithLinks(line.substring(2))}</li>
+          <li className="ml-5 list-disc my-1">
+            {parseTextWithLinks(line.substring(2))}
+          </li>
         );
       } else {
         formattedLine = parseTextWithLinks(line);
@@ -160,12 +257,15 @@ export default function ChatPanel() {
       {/* Header Strip */}
       <header className="dashboard-header">
         <div className="header-left">
-          <h1>Good Afternoon, Adom</h1>
-          <p>3 agents active • Strategy Hub Live</p>
+          <h1>
+            {timeGreeting()}
+            {userName ? `, ${userName}` : ""}
+          </h1>
+          <p>Jarvis online • Strategy Hub live</p>
         </div>
         <div className="header-right">
-          <p className="date">Tuesday, May 14</p>
-          <p className="time">14:02 PM GMT</p>
+          <p className="date">{formatDate(new Date())}</p>
+          <p className="time">{formatTime(new Date())}</p>
         </div>
       </header>
 
@@ -175,98 +275,106 @@ export default function ChatPanel() {
           {!isChatting ? (
             /* ── AI READY CENTRAL SHIELD ── */
             <div className="ready-view">
-              <div className="orb-wrapper">
-                <div className="orb-glow animate-pulse-glow" />
-                <div className="orb-svg-container animate-spin-slow">
+              <div className="orb-wrapper" data-state={orbState}>
+                <div className="orb-logo">
                   <svg
-                    width="288"
-                    height="288"
-                    viewBox="0 0 288 288"
+                    width="72"
+                    height="72"
+                    viewBox="0 0 32 32"
                     fill="none"
                     xmlns="http://www.w3.org/2000/svg"
+                    className="orb-logo-svg"
+                    aria-hidden="true"
                   >
+                    <defs>
+                      <radialGradient id="orb-hue" cx="50%" cy="40%" r="65%">
+                        <stop offset="0%" stopColor="#dbeafe" />
+                        <stop offset="55%" stopColor="#93c5fd" />
+                        <stop offset="100%" stopColor="#1d4ed8" />
+                      </radialGradient>
+                    </defs>
+                    <circle cx="10" cy="12" r="5" fill="url(#orb-hue)" />
                     <circle
-                      cx="144"
-                      cy="144"
-                      r="140"
-                      stroke="#bfdbfe"
-                      strokeWidth="0.5"
-                      strokeDasharray="3 6"
+                      cx="21"
+                      cy="10"
+                      r="4.2"
+                      fill="url(#orb-hue)"
+                      opacity="0.92"
                     />
                     <circle
-                      cx="144"
-                      cy="144"
-                      r="110"
-                      stroke="#93c5fd"
-                      strokeWidth="0.5"
-                      strokeDasharray="2 4"
-                    />
-                    <path
-                      d="M 144,34 A 110,110 0 0,1 254,144 A 110,110 0 0,1 144,254 A 110,110 0 0,1 34,144"
-                      stroke="#60a5fa"
-                      strokeWidth="1"
-                      strokeLinecap="round"
-                      strokeDasharray="4 8"
-                    />
-                    <path
-                      d="M144 144C100 120 70 80 50 144C30 208 80 220 144 144Z"
-                      stroke="#3b82f6"
-                      strokeWidth="0.8"
-                      opacity="0.3"
-                    />
-                    <path
-                      d="M144 144C188 168 218 208 238 144C258 80 208 68 144 144Z"
-                      stroke="#2563eb"
-                      strokeWidth="0.8"
-                      opacity="0.3"
-                    />
-                    <path
-                      d="M144 144C120 188 80 218 144 238C208 258 220 208 144 144Z"
-                      stroke="#3b82f6"
-                      strokeWidth="0.8"
-                      opacity="0.3"
-                    />
-                    <path
-                      d="M144 144C168 100 208 70 144 50C80 30 68 80 144 144Z"
-                      stroke="#1d4ed8"
-                      strokeWidth="0.8"
-                      opacity="0.3"
+                      cx="17"
+                      cy="21"
+                      r="6"
+                      fill="url(#orb-hue)"
+                      opacity="0.96"
                     />
                   </svg>
                 </div>
-
-                <div className="orb-logo-inner shadow-premium-box">
-                  <div className="orb-gradient-core">
-                    <div className="orb-glass-shield">
-                      <svg
-                        width="40"
-                        height="40"
-                        viewBox="0 0 32 32"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="filter drop-shadow-md"
-                      >
-                        <circle cx="10" cy="12" r="5" fill="#ffffff" />
-                        <circle cx="21" cy="10" r="4.2" fill="#ffffff" opacity="0.9" />
-                        <circle cx="17" cy="21" r="6" fill="#ffffff" opacity="0.95" />
-                      </svg>
-                    </div>
-                  </div>
-                </div>
               </div>
 
-              <h3>AI is ready</h3>
-              <p>Waiting for your instructions or voice command</p>
+              <h3>Jarvis is ready</h3>
+              <p className="ready-welcome">
+                {userName
+                  ? buildWelcomeMessage(userName)
+                      .split("\n\n")
+                      .map((para, i) => (
+                        <span key={i}>
+                          {i > 0 ? (
+                            <>
+                              <br />
+                              <br />
+                              {para}
+                            </>
+                          ) : (
+                            para
+                          )}
+                        </span>
+                      ))
+                  : "I'm Jarvis — your strategic intelligence assistant. Tap a pellet below or just ask."}
+              </p>
 
               {/* Quick Pill Buttons */}
               <div className="pills-grid">
                 {[
-                  { text: "Fast Update", label: "Fast", icon: Zap },
-                  { text: "In Depth Analysis", label: "In Depth", icon: BarChart2 },
-                  { text: "What's the latest market intelligence?", label: "Market intelligence", icon: Wand2 },
-                  { text: "Any new regulatory updates?", label: "Regulatory updates", icon: Globe },
-                  { text: "How do we compare against competitors?", label: "Competitors comparison", icon: PenTool },
-                  { text: "Generate daily briefing", label: "Daily briefing", icon: GraduationCap },
+                  {
+                    text: "Give me a fast update",
+                    label: "Quick brief",
+                    icon: Zap,
+                    description:
+                      "30-second snapshot of today's critical alerts",
+                  },
+                  {
+                    text: "Run an in-depth strategic analysis",
+                    label: "Deep dive",
+                    icon: BarChart2,
+                    description:
+                      "Multi-agent synthesis across market, regulatory, and competitive signals",
+                  },
+                  {
+                    text: "What's the latest market intelligence?",
+                    label: "Market intel",
+                    icon: Wand2,
+                    description: "Capital flows, FDI, investor sentiment",
+                  },
+                  {
+                    text: "Any new regulatory updates I should know about?",
+                    label: "Regulatory watch",
+                    icon: Globe,
+                    description: "Policy and compliance horizon scan",
+                  },
+                  {
+                    text: "How do we compare against our peer centres?",
+                    label: "Competitor scan",
+                    icon: PenTool,
+                    description:
+                      "Benchmarking against DIFC, ADGM, GIFT City, Singapore",
+                  },
+                  {
+                    text: "Generate today's daily briefing",
+                    label: "Daily briefing",
+                    icon: GraduationCap,
+                    description: "Pre-prepared morning intelligence snapshot",
+                  },
                 ].map((pill, idx) => {
                   const PillIcon = pill.icon;
                   return (
@@ -274,6 +382,8 @@ export default function ChatPanel() {
                       key={idx}
                       onClick={() => executePillAction(pill.text)}
                       className="pill-button"
+                      title={pill.description}
+                      style={{ animationDelay: `${idx * 60}ms` }}
                     >
                       <PillIcon size={14} style={{ color: "#9ca3af" }} />
                       {pill.label}
@@ -291,7 +401,7 @@ export default function ChatPanel() {
                   <span className="chat-header-text">
                     {focusedAgentId
                       ? `Focused Session: ${AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}`
-                      : "Core Intelligence Session"}
+                      : "Jarvis — Main Session"}
                   </span>
                 </div>
                 <button className="clear-chat-btn" onClick={handleClearChat}>
@@ -306,11 +416,16 @@ export default function ChatPanel() {
                     <span className="focus-pulse-dot" />
                     <span className="focus-banner-text">
                       Queries will be handled directly by the{" "}
-                      <strong>{AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}</strong>{" "}
+                      <strong>
+                        {AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}
+                      </strong>{" "}
                       specialist agent.
                     </span>
                   </div>
-                  <button className="reset-focus-btn" onClick={() => setFocusedAgentId(null)}>
+                  <button
+                    className="reset-focus-btn"
+                    onClick={() => setFocusedAgentId(null)}
+                  >
                     Reset to Core
                   </button>
                 </div>
@@ -318,93 +433,137 @@ export default function ChatPanel() {
 
               {/* Chat Message Scroll */}
               <div className="chat-scroll">
-                {messages.map((msg) => (
-                  <div key={msg.id} className={`message-wrapper ${msg.role}`}>
-                    <div className={`avatar-circle msg ${msg.role}`}>
-                      {msg.role === "user" ? "AD" : "AI"}
-                    </div>
-
-                    <div className="message-content-wrapper">
-                      {msg.role === "assistant" && (
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                          <span className="message-agent-name" style={{ paddingLeft: "4px" }}>
-                            {msg.agentName || "Core Intelligence"}
-                          </span>
-                          {msg.agentName && (
-                            msg.agentName.toLowerCase().includes("market") ||
-                            msg.agentName.toLowerCase().includes("regulatory") ||
-                            msg.agentName.toLowerCase().includes("competitor") ||
-                            msg.agentName.toLowerCase().includes("intelligence") ||
-                            msg.agentName.toLowerCase().includes("communications")
-                          ) && (
-                            <span className={`intel-source-badge ${msg.isLive === true ? "live" : "curated"}`}>
-                              {msg.isLive === true ? "🔴 Live Search" : "📋 Curated"}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <div className={`message-bubble ${msg.role}`}>
-                        {formatMessageContent(msg.content)}
+                {messages.map((msg, idx) => {
+                  // Suppress the in-flight assistant bubble while the
+                  // model is still streaming. The loading panel below
+                  // takes its place; once content arrives, the bubble
+                  // renders on the next render.
+                  const isInflightEmptyAssistant =
+                    showLoadingPanel &&
+                    idx === messages.length - 1 &&
+                    msg.role === "assistant" &&
+                    !msg.content;
+                  if (isInflightEmptyAssistant) return null;
+                  return (
+                    <div key={msg.id} className={`message-wrapper ${msg.role}`}>
+                      <div className={`avatar-circle msg ${msg.role}`}>
+                        {msg.role === "user" ? "AD" : "AI"}
                       </div>
 
-                      {/* Live Web Sources */}
-                      {msg.liveSources && msg.liveSources.length > 0 && (
-                        <div className="message-citations">
-                          <span className="live-sources-label">
-                            <Globe size={10} /> Live web sources ({msg.liveSources.length})
-                          </span>
-                          {msg.liveSources.map((src, i) => (
-                            <a
-                              key={i}
-                              href={src.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="citation-pill live-source-pill"
-                              title={src.title}
+                      <div className="message-content-wrapper">
+                        {msg.role === "assistant" && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              marginBottom: "4px",
+                            }}
+                          >
+                            <span
+                              className="message-agent-name"
+                              style={{ paddingLeft: "4px" }}
                             >
-                              <Globe size={10} />
-                              <span className="live-source-title">
-                                {src.title.length > 60 ? `${src.title.substring(0, 60)}…` : src.title}
-                              </span>
-                              {src.date && (
-                                <span className="live-source-date">· {src.date}</span>
+                              {msg.agentName || "Jarvis"}
+                            </span>
+                            {msg.agentName &&
+                              (msg.agentName.toLowerCase().includes("market") ||
+                                msg.agentName
+                                  .toLowerCase()
+                                  .includes("regulatory") ||
+                                msg.agentName
+                                  .toLowerCase()
+                                  .includes("competitor") ||
+                                msg.agentName
+                                  .toLowerCase()
+                                  .includes("intelligence") ||
+                                msg.agentName
+                                  .toLowerCase()
+                                  .includes("communications")) && (
+                                <span
+                                  className={`intel-source-badge ${msg.isLive === true ? "live" : "curated"}`}
+                                >
+                                  {msg.isLive === true
+                                    ? "🔴 Live Search"
+                                    : "📋 Curated"}
+                                </span>
                               )}
-                            </a>
-                          ))}
+                          </div>
+                        )}
+                        <div className={`message-bubble ${msg.role}`}>
+                          {formatMessageContent(msg.content)}
                         </div>
-                      )}
 
-                      {/* Source Citations */}
-                      {msg.citations && msg.citations.length > 0 && (
-                        <div className="message-citations">
-                          {msg.citations.map((cite, i) => (
-                            <button
-                              key={i}
-                              onClick={() => {
-                                router.push("/documents");
-                              }}
-                              className="citation-pill"
-                            >
-                              <FileText size={10} />
-                              {cite.docName} (Chunk {cite.chunkIndex})
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                        {/* Live Web Sources */}
+                        {msg.liveSources && msg.liveSources.length > 0 && (
+                          <div className="message-citations">
+                            <span className="live-sources-label">
+                              <Globe size={10} /> Live web sources (
+                              {msg.liveSources.length})
+                            </span>
+                            {msg.liveSources.map((src, i) => (
+                              <a
+                                key={i}
+                                href={src.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="citation-pill live-source-pill"
+                                title={src.title}
+                              >
+                                <Globe size={10} />
+                                <span className="live-source-title">
+                                  {src.title.length > 60
+                                    ? `${src.title.substring(0, 60)}…`
+                                    : src.title}
+                                </span>
+                                {src.date && (
+                                  <span className="live-source-date">
+                                    · {src.date}
+                                  </span>
+                                )}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Source Citations */}
+                        {msg.citations && msg.citations.length > 0 && (
+                          <div className="message-citations">
+                            {msg.citations.map((cite, i) => (
+                              <button
+                                key={i}
+                                onClick={() => {
+                                  router.push("/documents");
+                                }}
+                                className="citation-pill"
+                              >
+                                <FileText size={10} />
+                                {cite.docName} (Chunk {cite.chunkIndex})
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Did that help? — light feedback row. Per-message
+                          choice is persisted in localStorage so it
+                          survives a refresh and we can later use the
+                          signal for fine-tuning / quality review. */}
+                        <MessageFeedback messageId={msg.id} />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* Typing/Processing State */}
-                {isGenerating && (
+                {showLoadingPanel && (
                   <div className="typing-indicator">
                     <div className="avatar-circle msg assistant">
                       <Loader2 size={14} className="animate-spin" />
                     </div>
                     <div className="message-content-wrapper">
-                      <span className="message-agent-name">CSO Core Assistant</span>
+                      <span className="message-agent-name">Jarvis</span>
                       <div className="typing-box">
-                        <span>{activeToolStatus || "Orchestrating sub-agents..."}</span>
+                        <span>{activeToolStatus || "Jarvis is thinking…"}</span>
                         <div className="typing-dots">
                           <span style={{ animationDelay: "0ms" }} />
                           <span style={{ animationDelay: "150ms" }} />
@@ -439,7 +598,7 @@ export default function ChatPanel() {
                     placeholder={
                       focusedAgentId
                         ? `Ask ${AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}...`
-                        : "Ask AI or give instructions..."
+                        : "Ask Jarvis anything..."
                     }
                     rows={1}
                     className="textarea-input"
@@ -460,7 +619,7 @@ export default function ChatPanel() {
                     title="Send message"
                     style={{
                       opacity: inputVal.trim() ? 1 : 0.5,
-                      cursor: inputVal.trim() ? "pointer" : "default"
+                      cursor: inputVal.trim() ? "pointer" : "default",
                     }}
                     disabled={!inputVal.trim()}
                   >
@@ -473,7 +632,7 @@ export default function ChatPanel() {
             <div className="input-footer">
               <button className="model-select-button">
                 <Layers size={14} style={{ color: "#9ca3af" }} />
-                Core Intelligence
+                Jarvis
                 <ChevronDown size={12} style={{ color: "#9ca3af" }} />
               </button>
               <div className="options-right">
@@ -489,6 +648,65 @@ export default function ChatPanel() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// "Did that help?" — a tiny thumbs row that records the user's
+// reaction to a given assistant message. Stored in localStorage so
+// the signal survives a reload and could be lifted to the backend
+// in a follow-up. Hides itself on the welcome message (id starts
+// with "welcome") since there's no real reply to rate.
+function MessageFeedback({ messageId }: { messageId: string }) {
+  const [vote, setVote] = useState<"up" | "down" | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem("jarvis.feedback");
+      if (!raw) return;
+      const map = JSON.parse(raw) as Record<string, "up" | "down">;
+      setVote(map[messageId] ?? null);
+    } catch {
+      // best-effort
+    }
+  }, [messageId]);
+
+  if (messageId.startsWith("welcome")) return null;
+
+  const record = (next: "up" | "down") => {
+    const newVote = vote === next ? null : next;
+    setVote(newVote);
+    try {
+      const raw = window.localStorage.getItem("jarvis.feedback");
+      const map = (raw ? JSON.parse(raw) : {}) as Record<string, "up" | "down">;
+      if (newVote) map[messageId] = newVote;
+      else delete map[messageId];
+      window.localStorage.setItem("jarvis.feedback", JSON.stringify(map));
+    } catch {
+      // best-effort
+    }
+  };
+
+  return (
+    <div className="message-feedback">
+      <button
+        type="button"
+        className={`message-feedback-btn ${vote === "up" ? "active-up" : ""}`}
+        onClick={() => record("up")}
+        aria-label="Helpful"
+        title="Helpful"
+      >
+        <ThumbsUp size={11} strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        className={`message-feedback-btn ${vote === "down" ? "active-down" : ""}`}
+        onClick={() => record("down")}
+        aria-label="Not helpful"
+        title="Not helpful"
+      >
+        <ThumbsDown size={11} strokeWidth={2} />
+      </button>
     </div>
   );
 }
