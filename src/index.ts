@@ -15,7 +15,7 @@
 // ──────────────────────────────────────────────────────────────────
 
 import "dotenv/config";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { InMemoryVectorAdapter, Memory, VoltAgent } from "@voltagent/core";
@@ -131,6 +131,15 @@ const openrouter = createOpenAICompatible({
 	name: "openrouter",
 	baseURL: process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1",
 	apiKey: process.env.OPENAI_API_KEY ?? "",
+	transformRequestBody: (body) => {
+		return {
+			...body,
+			reasoning: {
+				effort: "medium",
+				exclude: true,
+			},
+		};
+	},
 });
 
 const model = openrouter(process.env.MODEL_ID ?? "openai/gpt-4o-mini");

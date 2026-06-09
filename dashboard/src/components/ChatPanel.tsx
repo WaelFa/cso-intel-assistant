@@ -213,6 +213,7 @@ export default function ChatPanel() {
 
   const formatMessageContent = (content: string) => {
     const cleanText = content
+      .replace(/<jarvis-internal-7f3a9c2b>[\s\S]*?<\/jarvis-internal-7f3a9c2b>/gi, "")
       .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
       .replace(
         /\[Source:\s*([^,\]]+),\s*chunk\s*(\d+),\s*relevance\s*([\d\.]+)\]/gi,

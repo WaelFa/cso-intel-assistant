@@ -260,37 +260,118 @@ function applyFocusFilter(
   };
 }
 
-// ── stripThinkingLines ────────────────────────────────────────────
-// Safety net for the model occasionally leaking a planning prefix
-// (e.g. "The user wants me to delegate…", "I'll pass this through…",
-// "Let me present this cleanly to the user…") into the visible
-// stream despite the supervisor prompt telling it not to. We only
-// inspect the first 6 lines because the leak always appears at the
-// very start of the reply — we never want to clobber a mid-message
-// sentence that happens to start with "I".
+// ── stripReasoningLeaks ──────────────────────────────────────────
+//
+// Multi-layer safety net for the model leaking its internal
+// deliberation into the visible response. Inspired by techniques
+// from Aider (hash-suffixed tag stripping), Cline (zero-preamble
+// enforcement), and Open Interpreter (streaming state machine).
+//
+// Three filtering passes, applied in order:
+//
+//   1. Tag stripping  — removes <jarvis-internal-7f3a9c2b>…</…>
+//      and <thought>…</thought> blocks (Aider-style). Handles
+//      both complete and incomplete (no closing tag) blocks.
+//
+//   2. Line-level prefix stripping — removes leading lines that
+//      match known reasoning-prefix patterns. Only inspects the
+//      first 8 lines to avoid clobbering mid-message content.
+//
+//   3. Paragraph-level reasoning detection — if the first
+//      paragraph (before any blank line) has a high density of
+//      meta-cognitive phrases ("I need to", "I'll call", "the
+//      user asked me to", etc.), strip the entire paragraph.
+//      This catches the case where the model generates a full
+//      reasoning paragraph instead of 1-2 prefix lines.
+
+const INTERNAL_TAG_REGEX =
+  /<jarvis-internal-7f3a9c2b>[\s\S]*?<\/jarvis-internal-7f3a9c2b>/gi;
+const THOUGHT_TAG_REGEX = /<thought>[\s\S]*?<\/thought>/gi;
+const INTERNAL_OPEN_TAG = "<jarvis-internal-7f3a9c2b>";
+const INTERNAL_CLOSE_TAG = "</jarvis-internal-7f3a9c2b>";
+const THOUGHT_OPEN_TAG = "<thought>";
+const THOUGHT_CLOSE_TAG = "</thought>";
+
+function stripInternalTags(text: string): string {
+  let result = text.replace(INTERNAL_TAG_REGEX, "").replace(THOUGHT_TAG_REGEX, "");
+
+  for (const [open, close] of [
+    [INTERNAL_OPEN_TAG, INTERNAL_CLOSE_TAG],
+    [THOUGHT_OPEN_TAG, THOUGHT_CLOSE_TAG],
+  ] as const) {
+    const closeIdx = result.indexOf(close);
+    if (closeIdx !== -1 && result.indexOf(open) === -1) {
+      result = result.slice(closeIdx + close.length);
+    }
+    const openIdx = result.indexOf(open);
+    if (openIdx !== -1 && result.indexOf(close) === -1) {
+      result = result.slice(0, openIdx);
+    }
+  }
+
+  return result;
+}
+
 const THINKING_PREFIX_PATTERNS: RegExp[] = [
-  /^\s*the user (wants|is asking|asked|has asked|needs|just (said|sent|typed|asked))/i,
-  /^\s*i('ll| will| should| need to| am going to| have to| want to| want| aim to)/i,
-  /^\s*i('m| am) (going to|about to|thinking|planning|ready|here|standing|sitting)/i,
-  /^\s*let me (now |just |cleanly )?(present|present this|write|draft|summarize|pass|show|deliver|format|respond|reply|handle|take|start|begin|craft|prepare|address)/i,
+  /^\s*the user (wants|is asking|asked|has asked|needs|just (said|sent|typed|asked)|is (looking|searching|asking))/i,
+  /^\s*the user('s| is) (question|request|query|message|prompt|ask)/i,
+  /^\s*i('ll| will| should| need to| am going to| have to| want to| want| aim to| must| can)/i,
+  /^\s*i('m| am) (going to|about to|thinking|planning|ready|here|standing|sitting|not sure)/i,
+  /^\s*let me (now |just |cleanly |first )?(present|present this|write|draft|summarize|pass|show|deliver|format|respond|reply|handle|take|start|begin|craft|prepare|address|check|look|search|retrieve|call|use|consult)/i,
+  /^\s*let('s| us) (get started|start|begin|proceed|see|check|look)/i,
   /^\s*per (the |my )?instructions/i,
+  /^\s*according to (the |my )?(instructions|rules|guidelines|prompt|system)/i,
   /^\s*as (the |configured |an? )?(strategic|cso|jarvis|assistant|trusted|chief|personal|ai)/i,
-  /^\s*now (i|let me|we)/i,
-  /^\s*the (market|regulatory|competitive|executive|strategic)[ -](intel|intelligence|output|communications) agent has returned/i,
+  /^\s*now (i|let me|we|let's)/i,
+  /^\s*the (market|regulatory|competitive|executive|strategic)[ -](intel|intelligence|output|communications) agent (has returned|returned|has responded|responded)/i,
   /^\s*here('s| is) (the|what|my|a |an |how|why|where|when)/i,
   /^\s*(the user just said|the user just sent|the user has sent|responding to the user|in response to (the user|this|that))/i,
   /^\s*(this is (a |an )?(casual|formal|brief|short|quick)|keep it (brief|short|warm|simple|concise|focused))/i,
+  /^\s*(i must remember|i need to remember|i should remember|remember to)/i,
+  /^\s*(once i (get|receive|have)|after i (get|receive|call)|when i get)/i,
+  /^\s*(i will now|i am now|i'll now|now i will|now i'll)/i,
+  /^\s*(first[,.]? i('ll| will| need to| should)|next[,.]? i('ll| will| need to| should))/i,
+  /^\s*(calling|invoking|using|triggering) (the |a )?(retrieve|search|generate|get|track|analyze|draft|upload)/i,
 ];
 
-function stripThinkingLines(text: string): string {
+const REASONING_PHRASE_SIGNALS: RegExp[] = [
+  /\b(the user (asked|wants|needs|is asking))\b/i,
+  /\b(i('ll| will| need to| should| must| am going to| have to))\b/i,
+  /\b(let me|let's|let us)\b/i,
+  /\b(according to (the |my )?instructions)\b/i,
+  /\b(per (the |my )?instructions)\b/i,
+  /\b(i must remember)\b/i,
+  /\b(once i (get|receive|have))\b/i,
+  /\b(call(ing)? the \w+ (tool|function))\b/i,
+  /\b(retrieve_documents|generate_daily_briefing|get_risk_indicators|search_market_intelligence)\b/i,
+  /\b(set topK|set top_k|topK to)\b/i,
+  /\b(synthesize|synthesise|synthesiz)/i,
+  /\b(in the required format|as required|as instructed)\b/i,
+  /\b(let'?s get started|here we go)\b/i,
+];
+
+function isReasoningParagraph(paragraph: string): boolean {
+  const sentences = paragraph.split(/[.!?]+/).filter((s) => s.trim().length > 10);
+  if (sentences.length < 2) return false;
+
+  let signalCount = 0;
+  for (const sentence of sentences) {
+    if (REASONING_PHRASE_SIGNALS.some((re) => re.test(sentence))) {
+      signalCount++;
+    }
+  }
+
+  const density = signalCount / sentences.length;
+  return density >= 0.5 && signalCount >= 2;
+}
+
+function stripLeadingReasoningLines(text: string): string {
   const lines = text.split("\n");
   let keptFrom = 0;
-  const window = Math.min(lines.length, 6);
+  const window = Math.min(lines.length, 8);
   for (let i = 0; i < window; i++) {
     const line = lines[i].trim();
     if (!line) {
-      // Blank line — keep walking; the real content often starts
-      // after a blank.
       continue;
     }
     const isThinking = THINKING_PREFIX_PATTERNS.some((re) => re.test(line));
@@ -301,6 +382,114 @@ function stripThinkingLines(text: string): string {
     break;
   }
   return lines.slice(keptFrom).join("\n").trimStart();
+}
+
+function stripReasoningParagraph(text: string): string {
+  const firstBlankIdx = text.search(/\n\s*\n/);
+  if (firstBlankIdx === -1) {
+    if (isReasoningParagraph(text)) return "";
+    return text;
+  }
+  const firstParagraph = text.slice(0, firstBlankIdx).trim();
+  const rest = text.slice(firstBlankIdx).trimStart();
+  if (isReasoningParagraph(firstParagraph)) {
+    return rest;
+  }
+  return text;
+}
+
+function stripReasoningLeaks(text: string): string {
+  let result = stripInternalTags(text);
+  result = stripLeadingReasoningLines(result);
+  result = stripReasoningParagraph(result);
+  return result.trimStart();
+}
+
+// ── Rotating status phrases ──────────────────────────────────────
+//
+// During long-running operations we cycle through a pool of contextually
+// appropriate phrases so the user sees activity. Tool-specific messages
+// (e.g. "Compiling Daily Intelligence Briefing…") stay static — they're
+// informative enough. Generic statuses (e.g. "Orchestrating sub-agents…",
+// "Synthesizing tool response…") rotate through the pool for the
+// matching stage. The timer is managed in the provider below.
+
+const ROTATING_PHRASES = {
+  thinking: [
+    "Thinking…",
+    "Processing the request…",
+    "Working on it…",
+    "Reviewing available context…",
+    "Evaluating the best approach…",
+    "Cross-checking the knowledge base…",
+    "Composing the response…",
+    "Considering the angles…",
+  ],
+  orchestrating: [
+    "Orchestrating sub-agents…",
+    "Coordinating specialist agents…",
+    "Delegating to the right team…",
+    "Checking internal agents…",
+    "Routing the query…",
+    "Aligning specialist perspectives…",
+    "Mobilising the agent fleet…",
+    "Handing off to subject-matter experts…",
+  ],
+  retrieving: [
+    "Searching the strategic document base…",
+    "Pulling relevant context…",
+    "Querying the knowledge base…",
+    "Scanning the document library…",
+    "Cross-referencing indexed materials…",
+    "Retrieving cited sources…",
+    "Mining the strategic corpus…",
+    "Locating supporting evidence…",
+  ],
+  consulting: [
+    "Consulting the specialist agent…",
+    "Awaiting expert analysis…",
+    "Briefing the subject-matter expert…",
+    "Syncing with the specialist…",
+    "Tapping specialist expertise…",
+    "Running the specialist's playbook…",
+    "Waiting on the specialist's assessment…",
+    "Gathering the specialist's read…",
+  ],
+  synthesizing: [
+    "Synthesising the response…",
+    "Distilling the findings…",
+    "Consolidating inputs from agents…",
+    "Stitching the pieces together…",
+    "Fusing the analysis into a single view…",
+    "Assembling the executive summary…",
+    "Polishing the answer…",
+    "Framing the strategic implications…",
+  ],
+  wrapping: [
+    "Finalising the response…",
+    "Adding the finishing touches…",
+    "Citing the sources…",
+    "Checking the facts…",
+    "Tidying the output…",
+    "Verifying the citations…",
+    "Preparing the readout…",
+    "Closing out the analysis…",
+  ],
+} as const;
+
+type PhraseCategory = keyof typeof ROTATING_PHRASES;
+
+const PHRASE_CYCLE_MS = 3200;
+
+function pickRandom<T>(arr: readonly T[], exclude?: T): T {
+  if (arr.length <= 1) return arr[0];
+  let pick = arr[Math.floor(Math.random() * arr.length)];
+  let guard = 0;
+  while (pick === exclude && guard < 4) {
+    pick = arr[Math.floor(Math.random() * arr.length)];
+    guard++;
+  }
+  return pick;
 }
 
 export function DashboardProvider({ children }: { children: React.ReactNode }) {
@@ -857,7 +1046,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       finalPrompt = `[Agent Direct Focus: ${agentDisp}] Please delegate this prompt directly to the ${agentDisp} specialist agent and provide its analysis: ${promptText}`;
     }
 
-    setActiveToolStatus("Orchestrating sub-agents...");
+    setActiveToolStatus(pickRandom(ROTATING_PHRASES.orchestrating));
 
     // Drop any pre-existing welcome message from the thread so the
     // user's first message is the first thing they see. The welcome
@@ -893,6 +1082,38 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         clearTimeout(promoteTimer);
         promoteTimer = null;
       }
+    };
+
+    // ── Status rotation timer ──────────────────────────────────────
+    // During long-running operations we cycle through a pool of
+    // contextually appropriate phrases (see ROTATING_PHRASES above).
+    // Tool-specific messages (e.g. "Compiling Daily Intelligence
+    // Briefing…") stay static — they're informative enough. Generic
+    // statuses (e.g. "Orchestrating sub-agents…", "Synthesising
+    // tool response…") rotate through the pool for the matching
+    // stage every PHRASE_CYCLE_MS.
+    let rotationTimer: ReturnType<typeof setTimeout> | null = null;
+    let rotationCategory: PhraseCategory | null = null;
+    let lastRotationPhrase: string | null = null;
+    const clearRotationTimer = () => {
+      if (rotationTimer) {
+        clearTimeout(rotationTimer);
+        rotationTimer = null;
+      }
+      rotationCategory = null;
+      lastRotationPhrase = null;
+    };
+    const scheduleRotation = () => {
+      if (!rotationCategory) return;
+      rotationTimer = setTimeout(() => {
+        rotationTimer = null;
+        if (!rotationCategory) return;
+        const pool = ROTATING_PHRASES[rotationCategory];
+        const next = pickRandom(pool, lastRotationPhrase ?? undefined);
+        lastRotationPhrase = next;
+        setActiveToolStatus(next);
+        scheduleRotation();
+      }, PHRASE_CYCLE_MS);
     };
 
     try {
@@ -950,7 +1171,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
       const promoteStream = (options?: { final?: boolean }) => {
         const parsedCitations = extractCitations(streamStripped);
-        const nextContent = streamStripped;
+        const nextContent = options?.final
+          ? stripReasoningLeaks(streamStripped)
+          : streamStripped;
         const nextAgentName = stream.agentName;
         const nextIsLive = stream.isLive;
         const nextLiveSources = stream.liveSources;
@@ -983,10 +1206,68 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       // Coalesce: only call setActiveToolStatus when the value
       // actually changes. Prevents flicker when the same status is
       // re-set across adjacent tool events.
+      //
+      // If the message is a "static" tool-specific status (e.g.
+      // "Compiling Daily Intelligence Briefing…"), it stays put.
+      // If it's a "generic" status (orchestrating, retrieving,
+      // consulting, synthesizing, wrapping, or thinking), we start
+      // a rotation timer that cycles through the matching phrase
+      // pool every PHRASE_CYCLE_MS. Switching categories restarts
+      // the rotation with the new pool.
+      const STATIC_STATUSES = new Set<string>([
+        "Compiling Daily Intelligence Briefing...",
+        "Searching strategic document RAG base...",
+        "Ingesting and indexing document corpus...",
+        "Analyzing strategic risks and threat parameters...",
+        "Retrieving key performance metric details...",
+        "Generating McKinsey-style presentation deck...",
+      ]);
       const setStatus = (msg: string) => {
         if (msg === lastStatus) return;
         lastStatus = msg;
         setActiveToolStatus(msg);
+
+        if (STATIC_STATUSES.has(msg)) {
+          clearRotationTimer();
+          return;
+        }
+
+        const category = classifyStatus(msg);
+        if (category && category !== rotationCategory) {
+          clearRotationTimer();
+          rotationCategory = category;
+          const pool = ROTATING_PHRASES[category];
+          const next = pickRandom(pool);
+          lastRotationPhrase = next;
+          setActiveToolStatus(next);
+          scheduleRotation();
+        }
+      };
+
+      // Classify a status message into a rotation category by
+      // keyword matching. Returns null for static (tool-specific)
+      // messages that should stay still.
+      const classifyStatus = (msg: string): PhraseCategory | null => {
+        const lower = msg.toLowerCase();
+        if (lower.includes("orchestrat") || lower.includes("sub-agent") || lower.includes("checking internal")) {
+          return "orchestrating";
+        }
+        if (lower.includes("retriev") || lower.includes("search") || lower.includes("document") || lower.includes("rag")) {
+          return "retrieving";
+        }
+        if (lower.includes("consult") || lower.includes("specialist")) {
+          return "consulting";
+        }
+        if (lower.includes("synthes") || lower.includes("consolidat") || lower.includes("stitch") || lower.includes("fusing") || lower.includes("distilling") || lower.includes("assembling") || lower.includes("polishing") || lower.includes("framing")) {
+          return "synthesizing";
+        }
+        if (lower.includes("finalis") || lower.includes("tidi") || lower.includes("verify") || lower.includes("close") || lower.includes("preparing") || lower.includes("adding")) {
+          return "wrapping";
+        }
+        if (lower.includes("thinking") || lower.includes("process") || lower.includes("working") || lower.includes("reviewing") || lower.includes("evaluat") || lower.includes("composing") || lower.includes("considering")) {
+          return "thinking";
+        }
+        return null;
       };
 
       if (reader) {
@@ -1012,7 +1293,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                 // promotion. While chunks are arriving, the
                 // debounce keeps resetting — we only push once the
                 // stream has been quiet for PROMOTION_DELAY_MS.
-                const nextStripped = stripThinkingLines(stream.content);
+                const nextStripped = stripReasoningLeaks(stream.content);
                 if (nextStripped !== streamStripped) {
                   streamStripped = nextStripped;
                   schedulePromotion();
@@ -1151,6 +1432,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       );
     } finally {
       clearPromoteTimer();
+      clearRotationTimer();
       setIsGenerating(false);
       abortControllerRef.current = null;
       setActiveToolStatus("");
