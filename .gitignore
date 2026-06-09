@@ -54,8 +54,10 @@ coverage
 # docs
 docs/
 
-# Runtime app data (settings, prepared briefings, scheduler state)
+# Runtime app data (settings, prepared briefings, generated presentations, scheduler state)
 # `data/seed/` is committed (curated demo content); everything else is generated.
 data/settings.json
 data/briefings/*.json
 !data/briefings/.gitkeep
+data/presentations/*.pptx
+!data/presentations/.gitkeep
