@@ -2,6 +2,9 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3141";
+
 // Types matching backend models
 export interface StoredDocument {
   id: string;
@@ -686,7 +689,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const fetchDocuments = async () => {
     try {
-      const res = await fetch("http://localhost:3141/api/documents");
+      const res = await fetch(`${BACKEND_URL}/api/documents`);
       if (res.ok) {
         const data = await res.json();
         setDocuments(data);
@@ -699,7 +702,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const fetchPresentations = useCallback(async () => {
     setIsPresentationLoading(true);
     try {
-      const res = await fetch("http://localhost:3141/api/presentations");
+      const res = await fetch(`${BACKEND_URL}/api/presentations`);
       if (res.ok) {
         const data = await res.json();
         setPresentations(data);
@@ -713,7 +716,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const fetchAgentConfigs = async () => {
     try {
-      const res = await fetch("http://localhost:3141/agents");
+      const res = await fetch(`${BACKEND_URL}/agents`);
       if (res.ok) {
         const data = await res.json();
         const prompts: Record<string, string> = {};
@@ -748,7 +751,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       // hasn't run and the user just opened the tab), fall back to
       // the live tool endpoint so the panel isn't blank.
       const res = await fetch(
-        "http://localhost:3141/tools/generate_daily_briefing/execute",
+        `${BACKEND_URL}/tools/generate_daily_briefing/execute`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -792,7 +795,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const fetchPreparedBriefing = async () => {
     try {
-      const res = await fetch("http://localhost:3141/api/briefing/today");
+      const res = await fetch(`${BACKEND_URL}/api/briefing/today`);
       if (res.ok) {
         const data = await res.json();
         const record = data.success && data.record ? (data.record as PreparedBriefingRecord) : null;
@@ -851,7 +854,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setIsSettingsLoading(true);
     setSettingsError(null);
     try {
-      const res = await fetch("http://localhost:3141/api/settings");
+      const res = await fetch(`${BACKEND_URL}/api/settings`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.settings) {
@@ -878,7 +881,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setIsSettingsSaving(true);
     setSettingsError(null);
     try {
-      const res = await fetch("http://localhost:3141/api/settings", {
+      const res = await fetch(`${BACKEND_URL}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(partial),
@@ -1185,7 +1188,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const response = await fetch(
-        "http://localhost:3141/agents/cso-intel-assistant/stream",
+        `${BACKEND_URL}/agents/cso-intel-assistant/stream`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1551,7 +1554,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       const base64Content = event.target?.result as string;
 
       try {
-        const res = await fetch("http://localhost:3141/api/documents/upload", {
+        const res = await fetch(`${BACKEND_URL}/api/documents/upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1589,7 +1592,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:3141/api/documents/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/documents/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {

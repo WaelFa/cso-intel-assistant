@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
     const prompt = lastMessage.content;
     const cid = conversationId || "cso-strategy-session";
 
-    const response = await fetch("http://localhost:3141/agents/cso-intel-assistant/chat", {
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:3141";
+    const response = await fetch(`${backendUrl}/agents/cso-intel-assistant/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

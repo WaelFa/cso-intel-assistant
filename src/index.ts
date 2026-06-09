@@ -231,12 +231,23 @@ new VoltAgent({
 		// We allow both ports so the dev workflow keeps working
 		// alongside any production deployment on a different host.
 		cors: {
-			origin: [
-				"http://localhost:3000",
-				"http://127.0.0.1:3000",
-				"http://localhost:3001",
-				"http://127.0.0.1:3001",
-			],
+			origin: (origin) => {
+				if (!origin) return origin;
+				const allowed = new Set<string>([
+					"http://localhost:3000",
+					"http://127.0.0.1:3000",
+					"http://localhost:3001",
+					"http://127.0.0.1:3001",
+				]);
+				const envOrigins = [
+					process.env.DASHBOARD_URL,
+					process.env.RENDER_EXTERNAL_URL,
+				]
+					.filter((v): v is string => typeof v === "string" && v.length > 0)
+					.flatMap((v) => [v, v.replace(/\/$/, "")]);
+				for (const o of envOrigins) allowed.add(o);
+				return allowed.has(origin) ? origin : null;
+			},
 			allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 			allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
 			credentials: true,

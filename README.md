@@ -345,6 +345,82 @@ A scripted smoke test for the document upload endpoint is in `scripts/test-uploa
 
 ---
 
+## Deploying (free demo)
+
+The repo ships with a `render.yaml` blueprint and a Vercel-friendly dashboard, so a public demo URL is one click per platform. Total cost: **$0** (free tiers).
+
+### Architecture
+
+```
+                 ┌────────────────────────────────────┐
+                 │  Vercel (Hobby) — dashboard        │
+                 │  https://cso-intel-assistant.       │
+                 │          vercel.app                 │
+                 └────────────────┬───────────────────┘
+                                  │ NEXT_PUBLIC_BACKEND_URL
+                                  ▼
+                 ┌────────────────────────────────────┐
+                 │  Render (Free Web Service) — API   │
+                 │  https://cso-intel-assistant-api.   │
+                 │          onrender.com              │
+                 │                                    │
+                 │  Persistent disk (1 GB):           │
+                 │   /app/data     briefings, .pptx   │
+                 │   /app/.voltagent  LibSQL memory   │
+                 └────────────────────────────────────┘
+```
+
+### One-time setup
+
+1. **Push to GitHub.** Render and Vercel both deploy from git.
+
+2. **Backend on Render.**
+   - Render Dashboard → **New** → **Blueprint** → pick the repo.
+   - Render reads `render.yaml` and creates `cso-intel-assistant-api` on the free plan.
+   - In the service's **Environment** tab, set:
+     - `OPENAI_API_KEY` — your OpenRouter key (required).
+     - `EXA_API_KEY` — optional, enables live web search.
+   - In the service's **Disks** tab, add a second 1 GB disk at `/app/.voltagent` (the blueprint only declares the first one).
+   - Wait for the first deploy. Confirm with:
+     ```
+     curl https://cso-intel-assistant-api.onrender.com/agents
+     ```
+     The first request after the service spins down takes ~30-50s (free tier sleeps after 15 min idle).
+
+3. **Dashboard on Vercel.**
+   - Vercel Dashboard → **Add New Project** → import the same repo.
+   - **Root Directory** = `dashboard`.
+   - **Environment Variables**:
+     - `NEXT_PUBLIC_BACKEND_URL` = `https://cso-intel-assistant-api.onrender.com`
+     - `BACKEND_URL` = the same value (server-side only, used by the `/api/chat` proxy).
+   - Deploy. Vercel prints `https://cso-intel-assistant.vercel.app`.
+
+4. **Close the CORS loop.**
+   - Back in Render → service **Environment** → set `DASHBOARD_URL` to the Vercel URL.
+   - Render auto-redeploys. After that, the dashboard can call the API without CORS errors.
+
+5. **Smoke test.** Open the Vercel URL in an incognito tab, send a chat message. The first message wakes the Render service and may take ~30s; subsequent ones are fast.
+
+### Cost & limits
+
+| Item | Limit | What we use |
+|---|---|---|
+| Render Web Service | 750 hrs/mo, sleeps after 15 min idle | Single instance |
+| Render disk | 1 GB included per disk | ~10 MB (briefings + LibSQL) |
+| Vercel Hobby | 100 GB bandwidth/mo, no sleep | Static-ish Next.js |
+| OpenRouter | Pay per token | ~$0.05 per 20-min demo |
+| Exa.ai free tier | 1,000 searches/mo | ~3 per manual refresh |
+
+### Gotchas
+
+- **Cold start.** Open the dashboard ~60s before the demo and send a "ping" message to wake the backend.
+- **State on cold start.** The in-memory vector store resets on every restart; the seed corpus re-loads from `data/seed/` so the demo still works.
+- **No auth.** The URL is semi-public. Don't upload documents containing real PII.
+- **Custom domains** can be added on both platforms for free, but the default `*.onrender.com` and `*.vercel.app` URLs are sufficient for a demo.
+
+
+---
+
 ## Configuring the briefing schedule
 
 The cron expression and timezone are persisted to `data/settings.json` and reloaded at boot. You can edit the file directly, or change it from the dashboard Settings panel — the PUT endpoint validates with Zod and re-binds the cron task in-process.

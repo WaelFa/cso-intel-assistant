@@ -17,4 +17,5 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 EXPOSE 3141
+VOLUME ["/app/data", "/app/.voltagent"]
 CMD ["npm", "start"]
