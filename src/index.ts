@@ -132,10 +132,24 @@ const openrouter = createOpenAICompatible({
 	baseURL: process.env.OPENAI_BASE_URL ?? "https://openrouter.ai/api/v1",
 	apiKey: process.env.OPENAI_API_KEY ?? "",
 	transformRequestBody: (body) => {
+		// The dashboard lets the user pick a reasoning effort per
+		// message (Fast / Medium / Deep). It is forwarded via
+		// `options.reasoning.effort` in the chat request body. We
+		// fall back to "medium" when missing or invalid so a stale
+		// or malformed request still gets a safe default.
+		const allowedEfforts = ["low", "medium", "high"] as const;
+		type AllowedEffort = (typeof allowedEfforts)[number];
+		const isAllowed = (v: unknown): v is AllowedEffort =>
+			typeof v === "string" &&
+			(allowedEfforts as readonly string[]).includes(v);
+		const incoming = (
+			body as { options?: { reasoning?: { effort?: unknown } } }
+		)?.options?.reasoning?.effort;
+		const effort: AllowedEffort = isAllowed(incoming) ? incoming : "medium";
 		return {
 			...body,
 			reasoning: {
-				effort: "medium",
+				effort,
 				exclude: true,
 			},
 		};

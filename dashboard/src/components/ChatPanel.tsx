@@ -19,10 +19,12 @@ import {
   FileText,
   ThumbsUp,
   ThumbsDown,
+  Brain,
+  Check,
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useUser } from "../hooks/useUser";
-import { AGENT_DISPLAY_NAMES } from "../context/DashboardContext";
+import { AGENT_DISPLAY_NAMES, useDashboard } from "../context/DashboardContext";
 
 // Header time helpers — kept local to the chat panel because they're
 // only used in the welcome strip. Both run client-side only.
@@ -90,11 +92,97 @@ export default function ChatPanel() {
     focusedAgentId,
     setFocusedAgentId,
     activeToolStatus,
+    reasoningEffort,
+    setReasoningEffort,
     handlePromptSubmit,
     handleStopGeneration,
     handleClearChat,
     executePillAction,
   } = useChat();
+
+  const { agentsStatus } = useDashboard();
+
+  // ── Footer dropdown state ──────────────────────────────────────
+  // The two pill-style controls under the input (agent picker +
+  // reasoning effort) behave as lightweight popovers. Keeping the
+  // open/close state local to ChatPanel avoids polluting the
+  // global context with transient UI state.
+  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
+  const agentMenuRef = useRef<HTMLDivElement | null>(null);
+  const reasoningMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!agentMenuOpen && !reasoningMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        agentMenuOpen &&
+        agentMenuRef.current &&
+        !agentMenuRef.current.contains(target)
+      ) {
+        setAgentMenuOpen(false);
+      }
+      if (
+        reasoningMenuOpen &&
+        reasoningMenuRef.current &&
+        !reasoningMenuRef.current.contains(target)
+      ) {
+        setReasoningMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setAgentMenuOpen(false);
+        setReasoningMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [agentMenuOpen, reasoningMenuOpen]);
+
+  // When a sub-agent is picked from the dropdown, the focus banner
+  // is already wired to render off `focusedAgentId`. We just set it.
+  // "cso-intel-assistant" represents the main orchestrator (Jarvis);
+  // selecting it clears the focus so the banner goes away.
+  const handleAgentSelect = (agentId: string) => {
+    if (agentId === "cso-intel-assistant") {
+      setFocusedAgentId(null);
+    } else {
+      setFocusedAgentId(agentId);
+    }
+    setAgentMenuOpen(false);
+  };
+
+  // Currently-selected agent — `null` means "main session" (Jarvis).
+  const selectedAgentName = focusedAgentId
+    ? AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId
+    : "Jarvis";
+
+  // Reasoning effort → human label + icon.
+  const reasoningOptions = [
+    { value: "low" as const, label: "Fast", icon: Zap, hint: "Quick replies" },
+    {
+      value: "medium" as const,
+      label: "Medium",
+      icon: BarChart2,
+      hint: "Balanced",
+    },
+    {
+      value: "high" as const,
+      label: "Deep",
+      icon: Brain,
+      hint: "Thorough reasoning",
+    },
+  ];
+  const currentReasoning = reasoningOptions.find(
+    (o) => o.value === reasoningEffort,
+  )!;
+  const ReasoningIcon = currentReasoning.icon;
 
   // Auto-scroll chat
   useEffect(() => {
@@ -631,15 +719,143 @@ export default function ChatPanel() {
             </div>
 
             <div className="input-footer">
-              <button className="model-select-button">
-                <Layers size={14} style={{ color: "#9ca3af" }} />
-                Jarvis
-                <ChevronDown size={12} style={{ color: "#9ca3af" }} />
-              </button>
+              <div className="input-footer-picker" ref={agentMenuRef}>
+                <button
+                  className="model-select-button"
+                  onClick={() => {
+                    setAgentMenuOpen((v) => !v);
+                    setReasoningMenuOpen(false);
+                  }}
+                  aria-haspopup="listbox"
+                  aria-expanded={agentMenuOpen}
+                  title="Choose which agent handles your next message"
+                >
+                  <Layers size={14} style={{ color: "#9ca3af" }} />
+                  <span className="model-select-label">{selectedAgentName}</span>
+                  <ChevronDown
+                    size={12}
+                    style={{
+                      color: "#9ca3af",
+                      transform: agentMenuOpen
+                        ? "rotate(180deg)"
+                        : "rotate(0deg)",
+                      transition: "transform 0.15s ease",
+                    }}
+                  />
+                </button>
+                {agentMenuOpen && (
+                  <div
+                    className="picker-dropdown picker-dropdown-up"
+                    role="listbox"
+                  >
+                    <div className="picker-dropdown-header">Active agent</div>
+                    {agentsStatus.map((agent) => {
+                      const isSelected =
+                        (agent.id === "cso-intel-assistant" && !focusedAgentId) ||
+                        agent.id === focusedAgentId;
+                      return (
+                        <button
+                          key={agent.id}
+                          className={`picker-option ${isSelected ? "selected" : ""}`}
+                          onClick={() => handleAgentSelect(agent.id)}
+                          role="option"
+                          aria-selected={isSelected}
+                        >
+                          <span
+                            className="picker-option-dot"
+                            style={{ backgroundColor: agent.iconColor }}
+                          />
+                          <span className="picker-option-text">
+                            <span className="picker-option-label">
+                              {agent.name}
+                            </span>
+                            <span className="picker-option-hint">
+                              {agent.id === "cso-intel-assistant"
+                                ? "Orchestrator — coordinates every specialist"
+                                : agent.description}
+                            </span>
+                          </span>
+                          {isSelected && (
+                            <Check
+                              size={14}
+                              className="picker-option-check"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
               <div className="options-right">
-                <div className="speed-badge">
-                  <ChevronDown size={12} />
-                  Fast
+                <div className="input-footer-picker" ref={reasoningMenuRef}>
+                  <button
+                    className="speed-badge speed-badge-button"
+                    onClick={() => {
+                      setReasoningMenuOpen((v) => !v);
+                      setAgentMenuOpen(false);
+                    }}
+                    aria-haspopup="listbox"
+                    aria-expanded={reasoningMenuOpen}
+                    title="Reasoning depth for the next message"
+                  >
+                    <ReasoningIcon size={12} />
+                    <span className="speed-badge-label">
+                      {currentReasoning.label}
+                    </span>
+                    <ChevronDown
+                      size={12}
+                      style={{
+                        transform: reasoningMenuOpen
+                          ? "rotate(180deg)"
+                          : "rotate(0deg)",
+                        transition: "transform 0.15s ease",
+                      }}
+                    />
+                  </button>
+                  {reasoningMenuOpen && (
+                    <div
+                      className="picker-dropdown picker-dropdown-up"
+                      role="listbox"
+                    >
+                      <div className="picker-dropdown-header">Reasoning</div>
+                      {reasoningOptions.map((opt) => {
+                        const Icon = opt.icon;
+                        const isSelected = opt.value === reasoningEffort;
+                        return (
+                          <button
+                            key={opt.value}
+                            className={`picker-option ${isSelected ? "selected" : ""}`}
+                            onClick={() => {
+                              setReasoningEffort(opt.value);
+                              setReasoningMenuOpen(false);
+                            }}
+                            role="option"
+                            aria-selected={isSelected}
+                          >
+                            <Icon
+                              size={14}
+                              className="picker-option-icon"
+                            />
+                            <span className="picker-option-text">
+                              <span className="picker-option-label">
+                                {opt.label}
+                              </span>
+                              <span className="picker-option-hint">
+                                {opt.hint}
+                              </span>
+                            </span>
+                            {isSelected && (
+                              <Check
+                                size={14}
+                                className="picker-option-check"
+                              />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
                 <button className="mic-button">
                   <Mic size={16} />

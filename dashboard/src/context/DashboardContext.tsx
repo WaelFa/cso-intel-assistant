@@ -234,6 +234,11 @@ interface DashboardContextProps {
   resetAgentStatuses: () => void;
   updateAgentMetrics: (agentId: string, outputData: any) => void;
 
+  // Reasoning effort (passed to OpenRouter's `reasoning.effort`).
+  // "low" → fast/cheap, "medium" → balanced (default), "high" → deep.
+  reasoningEffort: "low" | "medium" | "high";
+  setReasoningEffort: (effort: "low" | "medium" | "high") => void;
+
   // User identity (localStorage-backed, populated by OnboardingModal)
   userName: string | null;
   hasOnboarded: boolean;
@@ -504,6 +509,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeAgent] = useState<string>("cso-intel-assistant");
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
   const [activeToolStatus, setActiveToolStatus] = useState<string>("");
   const [conversationId] = useState(
     () => `cso-session-${Math.random().toString(36).substring(2, 11)}`,
@@ -1129,6 +1135,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                 conversationId,
                 userId: "cso-user",
               },
+              reasoning: {
+                effort: reasoningEffort,
+                exclude: true,
+              },
             },
           }),
           signal: controller.signal,
@@ -1592,6 +1602,9 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         animateSubAgents,
         resetAgentStatuses,
         updateAgentMetrics,
+
+        reasoningEffort,
+        setReasoningEffort,
 
         userName,
         hasOnboarded,
