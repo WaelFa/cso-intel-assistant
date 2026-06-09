@@ -21,6 +21,8 @@ import {
   ThumbsDown,
   Brain,
   Check,
+  Bell,
+  BellRing,
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useUser } from "../hooks/useUser";
@@ -52,20 +54,8 @@ function formatTime(d: Date) {
   });
 }
 
-// Build the welcome message body. Time-aware + personalized.
-// The "— J" sign-off matches the persona defined in the supervisor
-// prompt and is intentionally only used on the welcome line.
-function buildWelcomeMessage(name: string) {
-  const h = new Date().getHours();
-  const greeting =
-    h < 5
-      ? "Working late"
-      : h < 12
-        ? "Good morning"
-        : h < 18
-          ? "Good afternoon"
-          : "Good evening";
-  return `${greeting}, ${name}. I'm Jarvis — your strategic intelligence assistant.\n\nI can pull a fresh briefing, scan the regulatory horizon, benchmark us against peer centres, or draft a board paper. Tap a pellet below or just ask.`;
+function buildWelcomeMessage(name: string, agentName: string = "Jarvis") {
+  return `Hey ${name} — I'm ${agentName}. What can I dig into?`;
 }
 
 export default function ChatPanel() {
@@ -100,7 +90,16 @@ export default function ChatPanel() {
     executePillAction,
   } = useChat();
 
-  const { agentsStatus } = useDashboard();
+  const {
+    agentsStatus,
+    backgroundTasks,
+    hasUnseenBackgroundTask,
+    insertBackgroundTask,
+    cancelBackgroundTask,
+    dismissBackgroundTask,
+    markBackgroundTaskSeen,
+    settings,
+  } = useDashboard();
 
   // ── Footer dropdown state ──────────────────────────────────────
   // The two pill-style controls under the input (agent picker +
@@ -112,8 +111,38 @@ export default function ChatPanel() {
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
   const reasoningMenuRef = useRef<HTMLDivElement | null>(null);
 
+  // ── Background-tasks bell dropdown state ───────────────────────
+  // The bell lives in the chat header. Click opens a dropdown
+  // listing any backgrounded tasks (running + completed with
+  // unseen results). The dropdown is independent of the input
+  // popovers but uses the same outside-click / Escape dismissal
+  // pattern.
+  const [bgMenuOpen, setBgMenuOpen] = useState(false);
+  const bgMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Derive the running-task list (and whether any are running)
+  // straight from context. We tick every second via the context's
+  // internal interval so the elapsed-time text stays fresh.
+  const runningBgTasks = backgroundTasks?.filter((t) => t.status === "running") || [];
+  const unseenBgTasks = backgroundTasks?.filter((t) => t.hasUnseen) || [];
+  const allBgTasks = backgroundTasks || [];
+  // True if at least one slow sub-agent is still working in the
+  // background. Drives the input-bar status line and the
+  // send/stop gate.
+  const hasRunningBackgroundTask = runningBgTasks.length > 0;
+
+  // Tick once a second while any task is running so the bell
+  // dropdown's elapsed-time labels stay fresh. The interval
+  // callback (not the effect body) updates state.
+  const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
-    if (!agentMenuOpen && !reasoningMenuOpen) return;
+    if (!hasRunningBackgroundTask) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hasRunningBackgroundTask]);
+
+  useEffect(() => {
+    if (!agentMenuOpen && !reasoningMenuOpen && !bgMenuOpen) return;
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (
@@ -130,11 +159,19 @@ export default function ChatPanel() {
       ) {
         setReasoningMenuOpen(false);
       }
+      if (
+        bgMenuOpen &&
+        bgMenuRef.current &&
+        !bgMenuRef.current.contains(target)
+      ) {
+        setBgMenuOpen(false);
+      }
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setAgentMenuOpen(false);
         setReasoningMenuOpen(false);
+        setBgMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -143,7 +180,7 @@ export default function ChatPanel() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [agentMenuOpen, reasoningMenuOpen]);
+  }, [agentMenuOpen, reasoningMenuOpen, bgMenuOpen]);
 
   // When a sub-agent is picked from the dropdown, the focus banner
   // is already wired to render off `focusedAgentId`. We just set it.
@@ -158,10 +195,10 @@ export default function ChatPanel() {
     setAgentMenuOpen(false);
   };
 
-  // Currently-selected agent — `null` means "main session" (Jarvis).
+  // Currently-selected agent — `null` means "main session" (custom agent name).
   const selectedAgentName = focusedAgentId
     ? AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId
-    : "Jarvis";
+    : settings?.agentName || "Jarvis";
 
   // Reasoning effort → human label + icon.
   const reasoningOptions = [
@@ -198,10 +235,6 @@ export default function ChatPanel() {
     messages.length > 0 &&
     messages[messages.length - 1]?.role === "assistant" &&
     !messages[messages.length - 1]?.content;
-
-  // The welcome intro lives in the ready view (not in the chat
-  // thread) so we render the personalized greeting directly from
-  // `userName` below. No state syncing needed here.
 
   // Drive the orb state machine. Only applies while the ready view
   // is visible (no chat yet) — once the user has sent their first
@@ -350,9 +383,232 @@ export default function ChatPanel() {
             {timeGreeting()}
             {userName ? `, ${userName}` : ""}
           </h1>
-          <p>Jarvis online • Strategy Hub live</p>
+          <p>{settings?.agentName || "Jarvis"} online • Strategy Hub live</p>
         </div>
         <div className="header-right">
+          {/* Background-tasks bell. Visible whenever there's at
+              least one backgrounded task (running, completed with
+              unseen result, or any in the list). The badge count
+              reflects unseen items only. */}
+          {allBgTasks.length > 0 && (
+            <div
+              className="input-footer-picker"
+              ref={bgMenuRef}
+              style={{ marginRight: 12 }}
+            >
+              <button
+                className="model-select-button"
+                onClick={() => {
+                  setBgMenuOpen((v) => !v);
+                  setAgentMenuOpen(false);
+                  setReasoningMenuOpen(false);
+                }}
+                aria-haspopup="listbox"
+                aria-expanded={bgMenuOpen}
+                title={
+                  hasRunningBackgroundTask
+                    ? `${runningBgTasks.length} background task(s) running`
+                    : unseenBgTasks.length > 0
+                      ? `${unseenBgTasks.length} background result(s) ready`
+                      : "Background tasks"
+                }
+                style={{
+                  position: "relative",
+                  paddingRight: 26,
+                }}
+              >
+                {hasUnseenBackgroundTask ? (
+                  <BellRing size={14} style={{ color: "#f59e0b" }} />
+                ) : (
+                  <Bell size={14} style={{ color: "#9ca3af" }} />
+                )}
+                <span className="model-select-label">
+                  {hasRunningBackgroundTask
+                    ? `Background (${runningBgTasks.length} running)`
+                    : unseenBgTasks.length > 0
+                      ? `Background (${unseenBgTasks.length} ready)`
+                      : `Background (${allBgTasks.length})`}
+                </span>
+                {hasUnseenBackgroundTask && (
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: 4,
+                      right: 8,
+                      minWidth: 16,
+                      height: 16,
+                      padding: "0 4px",
+                      borderRadius: 8,
+                      background: "#f59e0b",
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {unseenBgTasks.length}
+                  </span>
+                )}
+              </button>
+              {bgMenuOpen && (
+                <div
+                  className="picker-dropdown picker-dropdown-up"
+                  role="listbox"
+                  style={{ minWidth: 320 }}
+                >
+                  <div className="picker-dropdown-header">
+                    Background tasks
+                  </div>
+                  {allBgTasks.length === 0 && (
+                    <div
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: 12,
+                        color: "#6b7280",
+                      }}
+                    >
+                      No backgrounded tasks.
+                    </div>
+                  )}
+                  {allBgTasks.map((t) => {
+                    const elapsed = Math.max(
+                      0,
+                      Math.floor(
+                        ((t.finishedAt ?? now) - t.startedAt) / 1000,
+                      ),
+                    );
+                    const mm = String(Math.floor(elapsed / 60)).padStart(
+                      2,
+                      "0",
+                    );
+                    const ss = String(elapsed % 60).padStart(2, "0");
+                    return (
+                      <div
+                        key={t.id}
+                        className="picker-option"
+                        style={{
+                          alignItems: "flex-start",
+                          padding: "10px 12px",
+                          cursor: "default",
+                        }}
+                      >
+                        <span
+                          className="picker-option-dot"
+                          style={{
+                            backgroundColor: t.subAgentColor,
+                            marginTop: 6,
+                          }}
+                        />
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          <span className="picker-option-label">
+                            {t.subAgentDisplay}
+                            {t.userPrompts.length > 1 && (
+                              <span
+                                style={{
+                                  color: "#6b7280",
+                                  fontWeight: 500,
+                                  marginLeft: 6,
+                                }}
+                              >
+                                +{t.userPrompts.length - 1} more
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className="picker-option-hint"
+                            style={{
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: 220,
+                            }}
+                          >
+                            {t.userPrompts[0]}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: t.hasUnseen ? "#f59e0b" : "#6b7280",
+                              fontWeight: t.hasUnseen ? 600 : 500,
+                            }}
+                          >
+                            {t.status === "running" && `Running • ${mm}:${ss}`}
+                            {t.status === "completed" &&
+                              (t.hasUnseen
+                                ? `Ready • ${mm}:${ss}`
+                                : `Completed • ${mm}:${ss}`)}
+                            {t.status === "failed" && `Failed • ${mm}:${ss}`}
+                            {t.status === "cancelled" &&
+                              `Cancelled • ${mm}:${ss}`}
+                          </span>
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: 6,
+                              marginTop: 4,
+                            }}
+                          >
+                            {t.status === "completed" && (
+                              <button
+                                type="button"
+                                className="reset-focus-btn"
+                                onClick={() => insertBackgroundTask(t.id)}
+                                title="Insert the result into the chat"
+                              >
+                                Insert
+                              </button>
+                            )}
+                            {t.status === "running" && (
+                              <button
+                                type="button"
+                                className="reset-focus-btn"
+                                onClick={() => cancelBackgroundTask(t.id)}
+                                title="Stop tracking this task"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            {t.status !== "running" && (
+                              <button
+                                type="button"
+                                className="reset-focus-btn"
+                                onClick={() => dismissBackgroundTask(t.id)}
+                                title="Dismiss this task"
+                              >
+                                Dismiss
+                              </button>
+                            )}
+                            {!t.hasUnseen && t.status === "completed" && (
+                              <button
+                                type="button"
+                                className="reset-focus-btn"
+                                onClick={() =>
+                                  markBackgroundTaskSeen(t.id)
+                                }
+                                title="Re-mark as unseen"
+                              >
+                                Mark unseen
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
           <p className="date">{formatDate(new Date())}</p>
           <p className="time">{formatTime(new Date())}</p>
         </div>
@@ -401,10 +657,10 @@ export default function ChatPanel() {
                 </div>
               </div>
 
-              <h3>Jarvis is ready</h3>
+              <h3>{settings?.agentName || "Jarvis"} is ready</h3>
               <p className="ready-welcome">
                 {userName
-                  ? buildWelcomeMessage(userName)
+                  ? buildWelcomeMessage(userName, settings?.agentName || "Jarvis")
                       .split("\n\n")
                       .map((para, i) => (
                         <span key={i}>
@@ -419,7 +675,7 @@ export default function ChatPanel() {
                           )}
                         </span>
                       ))
-                  : "I'm Jarvis — your strategic intelligence assistant. Tap a pellet below or just ask."}
+                  : `I'm ${settings?.agentName || "Jarvis"} — your strategic intelligence assistant. Tap a pellet below or just ask.`}
               </p>
 
               {/* Quick Pill Buttons */}
@@ -490,7 +746,7 @@ export default function ChatPanel() {
                   <span className="chat-header-text">
                     {focusedAgentId
                       ? `Focused Session: ${AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}`
-                      : "Jarvis — Main Session"}
+                      : `${settings?.agentName || "Jarvis"} — Main Session`}
                   </span>
                 </div>
                 <button className="clear-chat-btn" onClick={handleClearChat}>
@@ -523,10 +779,6 @@ export default function ChatPanel() {
               {/* Chat Message Scroll */}
               <div className="chat-scroll">
                 {messages.map((msg, idx) => {
-                  // Suppress the in-flight assistant bubble while the
-                  // model is still streaming. The loading panel below
-                  // takes its place; once content arrives, the bubble
-                  // renders on the next render.
                   const isInflightEmptyAssistant =
                     showLoadingPanel &&
                     idx === messages.length - 1 &&
@@ -536,7 +788,7 @@ export default function ChatPanel() {
                   return (
                     <div key={msg.id} className={`message-wrapper ${msg.role}`}>
                       <div className={`avatar-circle msg ${msg.role}`}>
-                        {msg.role === "user" ? "AD" : "AI"}
+                        {msg.role === "user" ? (userName ? userName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) : "CS") : "AI"}
                       </div>
 
                       <div className="message-content-wrapper">
@@ -553,7 +805,7 @@ export default function ChatPanel() {
                               className="message-agent-name"
                               style={{ paddingLeft: "4px" }}
                             >
-                              {msg.agentName || "Jarvis"}
+                              {msg.agentName || settings?.agentName || "Jarvis"}
                             </span>
                             {msg.agentName &&
                               (msg.agentName.toLowerCase().includes("market") ||
@@ -633,10 +885,6 @@ export default function ChatPanel() {
                           </div>
                         )}
 
-                        {/* Did that help? — light feedback row. Per-message
-                          choice is persisted in localStorage so it
-                          survives a refresh and we can later use the
-                          signal for fine-tuning / quality review. */}
                         <MessageFeedback messageId={msg.id} />
                       </div>
                     </div>
@@ -650,9 +898,9 @@ export default function ChatPanel() {
                       <Loader2 size={14} className="animate-spin" />
                     </div>
                     <div className="message-content-wrapper">
-                      <span className="message-agent-name">Jarvis</span>
+                      <span className="message-agent-name">{settings?.agentName || "Jarvis"}</span>
                       <div className="typing-box">
-                        <span>{activeToolStatus || "Jarvis is thinking…"}</span>
+                        <span>{activeToolStatus || `${settings?.agentName || "Jarvis"} is thinking…`}</span>
                         <div className="typing-dots">
                           <span style={{ animationDelay: "0ms" }} />
                           <span style={{ animationDelay: "150ms" }} />
@@ -687,13 +935,13 @@ export default function ChatPanel() {
                     placeholder={
                       focusedAgentId
                         ? `Ask ${AGENT_DISPLAY_NAMES[focusedAgentId] || focusedAgentId}...`
-                        : "Ask Jarvis anything..."
+                        : `Ask ${settings?.agentName || "Jarvis"} anything...`
                     }
                     rows={1}
                     className="textarea-input"
                   />
                 </div>
-                {isGenerating ? (
+                {isGenerating && !hasRunningBackgroundTask ? (
                   <button
                     className="stop-input-btn"
                     onClick={handleStopGeneration}
@@ -717,6 +965,37 @@ export default function ChatPanel() {
                 )}
               </div>
             </div>
+
+            {hasRunningBackgroundTask && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 12,
+                  color: "#475569",
+                  padding: "6px 4px 0",
+                  cursor: "pointer",
+                }}
+                onClick={() => setBgMenuOpen(true)}
+                title="Click to see backgrounded tasks"
+              >
+                <Loader2
+                  size={12}
+                  className="animate-spin"
+                  style={{ color: "#3b82f6" }}
+                />
+                <span>
+                  {settings?.agentName || "Jarvis"} is consulting{" "}
+                  <strong>
+                    {runningBgTasks.map((t) => t.subAgentDisplay).join(" & ")}
+                  </strong>{" "}
+                  in the background — you can keep chatting.
+                </span>
+              </div>
+            )}
 
             <div className="input-footer">
               <div className="input-footer-picker" ref={agentMenuRef}>

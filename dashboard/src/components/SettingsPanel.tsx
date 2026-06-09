@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { Loader2, Save, CheckCircle2, AlertCircle, Clock } from "lucide-react";
+import { Loader2, Save, CheckCircle2, AlertCircle, Clock, UserCog } from "lucide-react";
 import { useDashboard } from "../context/DashboardContext";
 
 const COMMON_TIMEZONES = [
@@ -168,6 +168,8 @@ export default function SettingsPanel() {
   const [minute, setMinute] = useState(40);
   const [days, setDays] = useState<number[]>([]); // empty = every day
   const [timezone, setTimezone] = useState("UTC");
+  const [localUserName, setLocalUserName] = useState("");
+  const [localAgentName, setLocalAgentName] = useState("");
   const [justSaved, setJustSaved] = useState(false);
 
   // Initialise the form from the persisted settings.
@@ -178,6 +180,8 @@ export default function SettingsPanel() {
       setMinute(parsed.minute);
       setDays(parsed.days);
       setTimezone(settings.briefingTimezone);
+      setLocalUserName(settings.userName || "");
+      setLocalAgentName(settings.agentName || "");
     }
   }, [settings]);
 
@@ -190,6 +194,8 @@ export default function SettingsPanel() {
     const ok = await saveSettings({
       briefingCron: derivedCron,
       briefingTimezone: timezone,
+      userName: localUserName.trim(),
+      agentName: localAgentName.trim(),
     });
     if (ok) {
       setJustSaved(true);
@@ -198,7 +204,10 @@ export default function SettingsPanel() {
   };
 
   const dirty = settings
-    ? derivedCron !== settings.briefingCron || timezone !== settings.briefingTimezone
+    ? derivedCron !== settings.briefingCron ||
+      timezone !== settings.briefingTimezone ||
+      localUserName !== (settings.userName || "") ||
+      localAgentName !== (settings.agentName || "")
     : false;
 
   const toggleDay = (value: number) => {
@@ -218,17 +227,11 @@ export default function SettingsPanel() {
     <div className="config-card">
       <div className="config-card-header">
         <span className="name">
-          <Clock size={14} style={{ marginRight: 8, verticalAlign: "-2px" }} />
-          Overnight Briefing Scheduler
+          <UserCog size={14} style={{ marginRight: 8, verticalAlign: "-2px" }} />
+          Configuration & Customize
         </span>
-        <span className="badge">live</span>
+        <span className="badge">settings</span>
       </div>
-
-      <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0, lineHeight: 1.5 }}>
-        When the overnight intelligence briefing should be prepared. The system fans out to live
-        market, regulatory, and competitor search and writes a snapshot to disk so the dashboard
-        opens with fresh data on your first click.
-      </p>
 
       {isSettingsLoading ? (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 0" }}>
@@ -256,164 +259,249 @@ export default function SettingsPanel() {
         </div>
       ) : null}
 
-      {/* Time of day */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <label
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: "var(--text-secondary)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-          }}
-        >
-          Time of day
-        </label>
-        <input
-          type="time"
-          value={formatTime(hour, minute)}
-          onChange={(e) => onTimeChange(e.target.value)}
-          style={{
-            fontSize: 14,
-            fontWeight: 600,
-            padding: "10px 12px",
-            border: "1px solid var(--border-color)",
-            borderRadius: 8,
-            background: "#f8fafc",
-            color: "var(--text-primary)",
-            fontFamily: "monospace",
-            width: "fit-content",
-            minWidth: 140,
-          }}
-        />
-        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {nextRunPreview(hour, minute, days, timezone)}
+      {/* ── Section 1: Profile & Persona Customization ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingBottom: 8 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", margin: "8px 0 0 0" }}>
+          Identity & Customization
+        </h3>
+        
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: "1 1 240px" }}>
+            <label
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "var(--text-secondary)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Your Name / Title
+            </label>
+            <input
+              type="text"
+              value={localUserName}
+              onChange={(e) => setLocalUserName(e.target.value)}
+              placeholder="Chief Strategy Officer"
+              maxLength={40}
+              style={{
+                fontSize: 13,
+                padding: "8px 12px",
+                border: "1px solid var(--border-color)",
+                borderRadius: 8,
+                background: "#f8fafc",
+                color: "var(--text-primary)",
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: "1 1 240px" }}>
+            <label
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "var(--text-secondary)",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+              }}
+            >
+              Agent Name (Supervisor)
+            </label>
+            <input
+              type="text"
+              value={localAgentName}
+              onChange={(e) => setLocalAgentName(e.target.value)}
+              placeholder="Jarvis"
+              maxLength={40}
+              style={{
+                fontSize: 13,
+                padding: "8px 12px",
+                border: "1px solid var(--border-color)",
+                borderRadius: 8,
+                background: "#f8fafc",
+                color: "var(--text-primary)",
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Days of week */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <label
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: "var(--text-secondary)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-          }}
-        >
-          Days
-        </label>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {/* "Every day" pill — clears the days filter */}
-          <button
-            type="button"
-            onClick={() => setDays([])}
+      <hr style={{ border: "none", borderTop: "1px solid #f1f5f9", margin: "16px 0" }} />
+
+      {/* ── Section 2: Overnight Briefing Scheduler ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", margin: 0 }}>
+            Overnight Briefing Scheduler
+          </h3>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0, lineHeight: 1.5 }}>
+            When the overnight intelligence briefing should be prepared. The system fans out to live
+            market, regulatory, and competitor search and writes a snapshot to disk so the dashboard
+            opens with fresh data on your first click.
+          </p>
+        </div>
+
+        {/* Time of day */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label
             style={{
               fontSize: 11,
-              fontWeight: 600,
-              padding: "6px 10px",
-              borderRadius: 9999,
-              border:
-                days.length === 0
-                  ? "1px solid var(--color-blue)"
-                  : "1px solid var(--border-color)",
-              background: days.length === 0 ? "rgba(59, 130, 246, 0.08)" : "white",
-              color: days.length === 0 ? "var(--color-blue)" : "var(--text-secondary)",
-              cursor: "pointer",
+              fontWeight: 700,
+              color: "var(--text-secondary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
             }}
           >
-            Every day
-          </button>
-          <button
-            type="button"
-            onClick={() => setDays([1, 2, 3, 4, 5])}
+            Time of day
+          </label>
+          <input
+            type="time"
+            value={formatTime(hour, minute)}
+            onChange={(e) => onTimeChange(e.target.value)}
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              padding: "10px 12px",
+              border: "1px solid var(--border-color)",
+              borderRadius: 8,
+              background: "#f8fafc",
+              color: "var(--text-primary)",
+              fontFamily: "monospace",
+              width: "fit-content",
+              minWidth: 140,
+            }}
+          />
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {nextRunPreview(hour, minute, days, timezone)}
+          </div>
+        </div>
+
+        {/* Days of week */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label
             style={{
               fontSize: 11,
-              fontWeight: 600,
-              padding: "6px 10px",
-              borderRadius: 9999,
-              border:
-                days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
-                  ? "1px solid var(--color-blue)"
-                  : "1px solid var(--border-color)",
-              background:
-                days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
-                  ? "rgba(59, 130, 246, 0.08)"
-                  : "white",
-              color:
-                days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
-                  ? "var(--color-blue)"
-                  : "var(--text-secondary)",
-              cursor: "pointer",
+              fontWeight: 700,
+              color: "var(--text-secondary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
             }}
           >
-            Weekdays
-          </button>
-          {DAYS.map((day) => {
-            const selected = days.includes(day.value);
-            return (
-              <button
-                key={day.value}
-                type="button"
-                onClick={() => toggleDay(day.value)}
-                title={day.label}
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "6px 10px",
-                  borderRadius: 9999,
-                  border: selected
+            Days
+          </label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {/* "Every day" pill — clears the days filter */}
+            <button
+              type="button"
+              onClick={() => setDays([])}
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "6px 10px",
+                borderRadius: 9999,
+                border:
+                  days.length === 0
                     ? "1px solid var(--color-blue)"
                     : "1px solid var(--border-color)",
-                  background: selected ? "rgba(59, 130, 246, 0.08)" : "white",
-                  color: selected ? "var(--color-blue)" : "var(--text-secondary)",
-                  cursor: "pointer",
-                  minWidth: 44,
-                }}
-              >
-                {day.short}
-              </button>
-            );
-          })}
+                background: days.length === 0 ? "rgba(59, 130, 246, 0.08)" : "white",
+                color: days.length === 0 ? "var(--color-blue)" : "var(--text-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              Every day
+            </button>
+            <button
+              type="button"
+              onClick={() => setDays([1, 2, 3, 4, 5])}
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: "6px 10px",
+                borderRadius: 9999,
+                border:
+                  days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
+                    ? "1px solid var(--color-blue)"
+                    : "1px solid var(--border-color)",
+                background:
+                  days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
+                    ? "rgba(59, 130, 246, 0.08)"
+                    : "white",
+                color:
+                  days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))
+                    ? "var(--color-blue)"
+                    : "var(--text-secondary)",
+                cursor: "pointer",
+              }}
+            >
+              Weekdays
+            </button>
+            {DAYS.map((day) => {
+              const selected = days.includes(day.value);
+              return (
+                <button
+                  key={day.value}
+                  type="button"
+                  onClick={() => toggleDay(day.value)}
+                  title={day.label}
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "6px 10px",
+                    borderRadius: 9999,
+                    border: selected
+                      ? "1px solid var(--color-blue)"
+                      : "1px solid var(--border-color)",
+                    background: selected ? "rgba(59, 130, 246, 0.08)" : "white",
+                    color: selected ? "var(--color-blue)" : "var(--text-secondary)",
+                    cursor: "pointer",
+                    minWidth: 44,
+                  }}
+                >
+                  {day.short}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      {/* Timezone */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        <label
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            color: "var(--text-secondary)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-          }}
-        >
-          Timezone
-        </label>
-        <select
-          value={timezone}
-          onChange={(e) => setTimezone(e.target.value)}
-          style={{
-            fontSize: 13,
-            padding: "8px 10px",
-            border: "1px solid var(--border-color)",
-            borderRadius: 8,
-            background: "#f8fafc",
-            color: "var(--text-primary)",
-            width: "fit-content",
-            minWidth: 220,
-          }}
-        >
-          {COMMON_TIMEZONES.map((tz) => (
-            <option key={tz} value={tz}>
-              {tz}
-            </option>
-          ))}
-        </select>
-        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {describeSchedule(hour, minute, days, timezone)}
+        {/* Timezone */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--text-secondary)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            Timezone
+          </label>
+          <select
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            style={{
+              fontSize: 13,
+              padding: "8px 10px",
+              border: "1px solid var(--border-color)",
+              borderRadius: 8,
+              background: "#f8fafc",
+              color: "var(--text-primary)",
+              width: "fit-content",
+              minWidth: 220,
+            }}
+          >
+            {COMMON_TIMEZONES.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {describeSchedule(hour, minute, days, timezone)}
+          </div>
         </div>
       </div>
 
@@ -423,14 +511,15 @@ export default function SettingsPanel() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          paddingTop: 8,
+          paddingTop: 16,
+          marginTop: 16,
           borderTop: "1px solid #f1f5f9",
         }}
       >
         <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
           {settings?.updatedAt
             ? `Last updated: ${new Date(settings.updatedAt).toLocaleString()}`
-            : "Using default schedule."}
+            : "Using default settings."}
         </div>
         <button
           type="button"

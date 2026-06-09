@@ -60,6 +60,8 @@ const timezoneSchema = z
 const settingsSchema = z.object({
 	briefingCron: cronExpressionSchema,
 	briefingTimezone: timezoneSchema,
+	userName: z.string().min(1).max(64).optional(),
+	agentName: z.string().min(1).max(64).optional(),
 	updatedAt: z.string().optional(),
 });
 
@@ -69,6 +71,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	// 7:40 AM, every day, in the default runtime timezone.
 	briefingCron: "40 7 * * *",
 	briefingTimezone: "UTC",
+	userName: "Chief Strategy Officer",
+	agentName: "Jarvis",
 };
 
 // ── Read / Write ──────────────────────────────────────────────────
@@ -101,6 +105,8 @@ export async function readSettings(): Promise<AppSettings> {
 export interface UpdateSettingsInput {
 	briefingCron?: string;
 	briefingTimezone?: string;
+	userName?: string;
+	agentName?: string;
 }
 
 export async function updateSettings(
@@ -110,9 +116,12 @@ export async function updateSettings(
 	// race on the file.
 	const next = writeQueue.then(async () => {
 		const current = await readSettings();
+		const cleanPartial = Object.fromEntries(
+			Object.entries(partial).filter(([_, v]) => v !== undefined),
+		);
 		const merged = {
 			...current,
-			...partial,
+			...cleanPartial,
 			updatedAt: new Date().toISOString(),
 		};
 		const result = settingsSchema.parse(merged); // throws on invalid

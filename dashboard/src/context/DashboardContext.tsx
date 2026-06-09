@@ -57,6 +57,8 @@ export interface PreparedBriefingRecord {
 export interface AppSettings {
   briefingCron: string;
   briefingTimezone: string;
+  userName?: string;
+  agentName?: string;
   updatedAt?: string;
 }
 
@@ -239,10 +241,17 @@ interface DashboardContextProps {
   reasoningEffort: "low" | "medium" | "high";
   setReasoningEffort: (effort: "low" | "medium" | "high") => void;
 
-  // User identity (localStorage-backed, populated by OnboardingModal)
   userName: string | null;
   hasOnboarded: boolean;
-  setUserName: (name: string) => void;
+  setUserName: (name: string, agentName?: string) => void;
+
+  // Backgrounded Sub-Agent Tasks (Stubs)
+  backgroundTasks: any[];
+  hasUnseenBackgroundTask: boolean;
+  insertBackgroundTask: (id: string) => void;
+  cancelBackgroundTask: (id: string) => void;
+  dismissBackgroundTask: (id: string) => void;
+  markBackgroundTaskSeen: (id: string) => void;
 }
 
 const DashboardContext = createContext<DashboardContextProps | undefined>(undefined);
@@ -542,7 +551,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const setUserName = (name: string) => {
+  const setUserName = (name: string, agentName?: string) => {
     const trimmed = name.trim();
     setUserNameState(trimmed || null);
     setHasOnboarded(true);
@@ -551,6 +560,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       window.localStorage.setItem(ONBOARDED_KEY, "true");
     } catch {
       // best-effort persistence
+    }
+    const settingsPayload: Partial<AppSettings> = {};
+    if (trimmed) settingsPayload.userName = trimmed;
+    if (agentName?.trim()) settingsPayload.agentName = agentName.trim();
+    if (Object.keys(settingsPayload).length > 0) {
+      saveSettings(settingsPayload).catch((err) => {
+        console.error("Failed to sync onboarding to settings backend:", err);
+      });
     }
   };
 
@@ -642,6 +659,20 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       iconColor: "#f59e0b",
     },
   ]);
+
+  // Synchronise agentName in agentsStatus state when settings load
+  useEffect(() => {
+    if (settings?.agentName) {
+      setAgentsStatus((prev) =>
+        prev.map((agent) =>
+          agent.id === "cso-intel-assistant"
+            ? { ...agent, name: settings.agentName! }
+            : agent,
+        ),
+      );
+      AGENT_DISPLAY_NAMES["cso-intel-assistant"] = settings.agentName;
+    }
+  }, [settings?.agentName]);
 
   // Load initial data on mount
   useEffect(() => {
@@ -824,7 +855,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.settings) {
-          setSettings(data.settings as AppSettings);
+          const s = data.settings as AppSettings;
+          setSettings(s);
+          if (s.userName) {
+            setUserNameState(s.userName);
+            try {
+              window.localStorage.setItem(USER_NAME_KEY, s.userName);
+            } catch {}
+          }
         }
       } else {
         setSettingsError(`Failed to load settings (HTTP ${res.status})`);
@@ -847,7 +885,14 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        setSettings(data.settings as AppSettings);
+        const s = data.settings as AppSettings;
+        setSettings(s);
+        if (s.userName) {
+          setUserNameState(s.userName);
+          try {
+            window.localStorage.setItem(USER_NAME_KEY, s.userName);
+          } catch {}
+        }
         return true;
       }
       setSettingsError(data.error ?? `HTTP ${res.status}`);
@@ -858,6 +903,22 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsSettingsSaving(false);
     }
+  };
+
+  // Backgrounded Sub-Agent Tasks (Mock implementations to allow compiling)
+  const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
+  const [hasUnseenBackgroundTask, setHasUnseenBackgroundTask] = useState(false);
+  const insertBackgroundTask = (id: string) => {
+    console.log("Mock insertBackgroundTask called for task:", id);
+  };
+  const cancelBackgroundTask = (id: string) => {
+    console.log("Mock cancelBackgroundTask called for task:", id);
+  };
+  const dismissBackgroundTask = (id: string) => {
+    console.log("Mock dismissBackgroundTask called for task:", id);
+  };
+  const markBackgroundTaskSeen = (id: string) => {
+    console.log("Mock markBackgroundTaskSeen called for task:", id);
   };
 
   const animateSubAgents = (text: string) => {
@@ -1075,7 +1136,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       role: "assistant",
       content: "",
       timestamp: new Date(),
-      agentName: "Jarvis",
+      agentName: settings?.agentName || "Jarvis",
     };
     setMessages((prev) => [...prev, newAssistantMsg]);
 
@@ -1609,6 +1670,13 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         userName,
         hasOnboarded,
         setUserName,
+
+        backgroundTasks,
+        hasUnseenBackgroundTask,
+        insertBackgroundTask,
+        cancelBackgroundTask,
+        dismissBackgroundTask,
+        markBackgroundTaskSeen,
       }}
     >
       {children}

@@ -8,7 +8,12 @@ import { useDashboard } from "../context/DashboardContext";
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { hasUnseenBriefing, markBriefingSeen } = useDashboard();
+  const { hasUnseenBriefing, markBriefingSeen, userName, settings } = useDashboard();
+
+  const nameToUse = settings?.userName || userName || "";
+  const initials = nameToUse
+    ? nameToUse.split(" ").map((n) => n.charAt(0)).join("").toUpperCase().slice(0, 2)
+    : "CS";
 
   const navigationItems = [
     { href: "/", icon: Layout, label: "Console" },
@@ -83,7 +88,7 @@ export default function Sidebar() {
             justifyContent: "center",
           }}
         >
-          N
+          {initials}
         </div>
       </div>
     </aside>

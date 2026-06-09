@@ -16,7 +16,7 @@ import {
 	EXEC_COMMS_PROMPT,
 	MARKET_INTEL_PROMPT,
 	REGULATORY_INTEL_PROMPT,
-	SUPERVISOR_PROMPT,
+	getSupervisorPrompt,
 } from "../prompts/index.js";
 import type { DocumentStore } from "../retriever/index.js";
 import {
@@ -37,6 +37,7 @@ interface AgentDeps {
 	model: LanguageModel;
 	memory?: Memory;
 	documentStore?: DocumentStore;
+	agentName?: string;
 }
 
 /** Max tool-call steps for any single agent turn. Bounds runaway loops. */
@@ -136,6 +137,7 @@ export function createSupervisorAgent({
 	model,
 	memory,
 	documentStore,
+	agentName = "Jarvis",
 }: AgentDeps) {
 	// First, create the specialist sub-agents
 	const marketIntel = createMarketIntelAgent({ model });
@@ -155,7 +157,7 @@ export function createSupervisorAgent({
 	// Then create the supervisor that orchestrates them
 	return new Agent({
 		name: "cso-intel-assistant",
-		instructions: SUPERVISOR_PROMPT,
+		instructions: getSupervisorPrompt(agentName),
 		model,
 		memory,
 		// Supervisor's own tools (in addition to its sub-agents)

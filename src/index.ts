@@ -54,6 +54,7 @@ import {
 	startScheduler,
 	stopScheduler,
 } from "./jobs/schedule-briefing.js";
+import { getSupervisorPrompt } from "./prompts/index.js";
 import {
 	DocumentStore,
 	createAiSdkEmbedder,
@@ -189,18 +190,15 @@ logger.info(
 	`[seed] ${seedResult.ingested} ingested, ${seedResult.skipped} skipped, ${seedResult.errors.length} error(s)`,
 );
 
-// ── 5. Agents ─────────────────────────────────────────────────────
-// The supervisor agent is the main agent the CSO talks to.
-// It has 4 specialized sub-agents:
-//   - Market Intelligence
-//   - Regulatory Intelligence
-//   - Competitive Intelligence
-//   - Executive Communications
-//
-// Plus 5 direct supervisor tools (3 from Phase 2, 2 from Phase 3).
-//
-// See docs/01-multi-agent-architecture.md for how this works.
-const agent = createSupervisorAgent({ model, memory, documentStore });
+// Read initial settings to configure dynamic settings (like agentName) at boot
+const initialSettings = await readSettings();
+
+const agent = createSupervisorAgent({
+	model,
+	memory,
+	documentStore,
+	agentName: initialSettings.agentName,
+});
 
 // ── 6. Workflows (Phase 3) ────────────────────────────────────────
 // The intelligence-pipeline workflow demonstrates the
@@ -411,8 +409,18 @@ new VoltAgent({
 							typeof body.briefingTimezone === "string"
 								? body.briefingTimezone
 								: undefined,
+						userName:
+							typeof body.userName === "string" ? body.userName : undefined,
+						agentName:
+							typeof body.agentName === "string" ? body.agentName : undefined,
 					});
 					await reconfigureScheduler(updated);
+					if (updated.agentName) {
+						// biome-ignore lint/suspicious/noExplicitAny: agent instructions are readonly in typescript but writable at runtime
+						(agent as any).instructions = getSupervisorPrompt(
+							updated.agentName,
+						);
+					}
 					return c.json({ success: true, settings: updated });
 				} catch (err) {
 					return c.json(

@@ -11,13 +11,16 @@ export default function ConfigPanel() {
     <div className="config-tab-view">
       <header>
         <h1>System Configuration</h1>
-        <p>Review system prompts, RACER framework configurations, and overnight briefing schedule</p>
+        <p>
+          Review system prompts, RACER framework configurations, and overnight
+          briefing schedule
+        </p>
       </header>
 
       <div className="config-scroll">
         <SettingsPanel />
 
-        {Object.keys(systemPrompts).length > 0 ? (
+        {/* {Object.keys(systemPrompts).length > 0 ? (
           Object.entries(systemPrompts).map(([agentName, promptContent]) => (
             <div key={agentName} className="config-card">
               <div className="config-card-header">
@@ -42,7 +45,7 @@ export default function ConfigPanel() {
           >
             Loading agent system prompts from Hono registry...
           </div>
-        )}
+        )} */}
       </div>
     </div>
   );

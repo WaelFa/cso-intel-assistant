@@ -19,12 +19,13 @@ import {
   Layout,
 } from "lucide-react";
 import { useChat } from "../hooks/useChat";
+import { useDashboard } from "../context/DashboardContext";
 
 type Command = {
   id: string;
   label: string;
   description?: string;
-  group: "Ask Jarvis" | "Navigate" | "Session";
+  group: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
   // We capture the action at definition time so the palette stays
   // a pure presentational component.
@@ -33,6 +34,8 @@ type Command = {
 
 export default function CommandPalette() {
   const router = useRouter();
+  const { settings } = useDashboard();
+  const agentName = settings?.agentName || "Jarvis";
   const {
     setIsChatting,
     handlePromptSubmit,
@@ -60,7 +63,7 @@ export default function CommandPalette() {
         id: "quick-brief",
         label: "Quick brief",
         description: "30-second snapshot of today's critical alerts",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: Zap,
         run: () => askJarvis("Give me a fast update"),
       },
@@ -68,7 +71,7 @@ export default function CommandPalette() {
         id: "deep-dive",
         label: "Deep dive",
         description: "Multi-agent synthesis across all intelligence streams",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: BarChart2,
         run: () => askJarvis("Run an in-depth strategic analysis"),
       },
@@ -76,7 +79,7 @@ export default function CommandPalette() {
         id: "market-intel",
         label: "Market intel",
         description: "Capital flows, FDI, investor sentiment",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: Sparkles,
         run: () => askJarvis("What's the latest market intelligence?"),
       },
@@ -84,7 +87,7 @@ export default function CommandPalette() {
         id: "regulatory",
         label: "Regulatory watch",
         description: "Policy and compliance horizon scan",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: Globe,
         run: () => askJarvis("Any new regulatory updates I should know about?"),
       },
@@ -92,7 +95,7 @@ export default function CommandPalette() {
         id: "competitors",
         label: "Competitor scan",
         description: "Benchmark against peer financial centres",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: PenTool,
         run: () => askJarvis("How do we compare against our peer centres?"),
       },
@@ -100,7 +103,7 @@ export default function CommandPalette() {
         id: "briefing",
         label: "Generate daily briefing",
         description: "Pre-prepared morning intelligence snapshot",
-        group: "Ask Jarvis",
+        group: `Ask ${agentName}`,
         icon: GraduationCap,
         run: () => askJarvis("Generate today's daily briefing"),
       },
@@ -139,21 +142,21 @@ export default function CommandPalette() {
       {
         id: "session-clear",
         label: "Clear current chat",
-        description: "Start a fresh conversation with Jarvis",
+        description: `Start a fresh conversation with ${agentName}`,
         group: "Session",
         icon: Trash2,
         run: () => handleClearChat(),
       },
       {
         id: "session-stop",
-        label: "Stop Jarvis",
+        label: `Stop ${agentName}`,
         description: "Halt the current generation",
         group: "Session",
         icon: Square,
         run: () => handleStopGeneration(),
       },
     ],
-    [askJarvis, handleClearChat, handleStopGeneration, router],
+    [askJarvis, handleClearChat, handleStopGeneration, router, agentName],
   );
 
   // Filter on substring match against label + description (case
@@ -258,7 +261,7 @@ export default function CommandPalette() {
           <input
             ref={inputRef}
             className="command-palette-input"
-            placeholder="Ask Jarvis or jump to a page…"
+            placeholder={`Ask ${agentName} or jump to a page…`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}

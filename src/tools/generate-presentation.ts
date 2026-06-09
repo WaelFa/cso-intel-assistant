@@ -14,15 +14,16 @@
 // via the GET /api/presentations/:id/download endpoint.
 // ──────────────────────────────────────────────────────────────────
 
-import { createTool } from "@voltagent/core";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createTool } from "@voltagent/core";
 import { z } from "zod";
 
 // PptxGenJS has a non-standard export (namespace + default class).
 // We import the module and resolve the constructor at runtime.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import PptxGenJSModule from "pptxgenjs";
+// biome-ignore lint/suspicious/noExplicitAny: pptxgenjs default import compatibility resolution
 const PptxGenJS = (PptxGenJSModule as any).default || PptxGenJSModule;
 
 // Use 'any' for the pptx instance type since the library's type declarations
@@ -346,10 +347,7 @@ function addKeyFindingsSlide(
 	});
 }
 
-function addRecommendationsSlide(
-	pptx: Pptx,
-	recommendations: string[],
-) {
+function addRecommendationsSlide(pptx: Pptx, recommendations: string[]) {
 	const slide = pptx.addSlide();
 	slide.background = { color: COLORS.darkNavy };
 
@@ -470,10 +468,34 @@ function addSWOTSlide(
 	});
 
 	const quadrants = [
-		{ label: "STRENGTHS", items: swot.strengths, color: COLORS.accentGreen, x: 0.8, y: 1.45 },
-		{ label: "WEAKNESSES", items: swot.weaknesses, color: COLORS.accentRed, x: 5.0, y: 1.45 },
-		{ label: "OPPORTUNITIES", items: swot.opportunities, color: COLORS.accent, x: 0.8, y: 3.2 },
-		{ label: "THREATS", items: swot.threats, color: COLORS.accentGold, x: 5.0, y: 3.2 },
+		{
+			label: "STRENGTHS",
+			items: swot.strengths,
+			color: COLORS.accentGreen,
+			x: 0.8,
+			y: 1.45,
+		},
+		{
+			label: "WEAKNESSES",
+			items: swot.weaknesses,
+			color: COLORS.accentRed,
+			x: 5.0,
+			y: 1.45,
+		},
+		{
+			label: "OPPORTUNITIES",
+			items: swot.opportunities,
+			color: COLORS.accent,
+			x: 0.8,
+			y: 3.2,
+		},
+		{
+			label: "THREATS",
+			items: swot.threats,
+			color: COLORS.accentGold,
+			x: 5.0,
+			y: 3.2,
+		},
 	];
 
 	for (const q of quadrants) {
@@ -603,9 +625,7 @@ const presentationOutputSchema = z.object({
 	filePath: z.string().describe("Absolute path to the generated .pptx file"),
 	downloadUrl: z
 		.string()
-		.describe(
-			"Relative URL for downloading: /api/presentations/{id}/download",
-		),
+		.describe("Relative URL for downloading: /api/presentations/{id}/download"),
 	generatedAt: z.string().describe("ISO 8601 timestamp"),
 });
 
@@ -627,10 +647,12 @@ export const generatePresentationTool = createTool({
 			.describe(
 				"The presentation topic, e.g. 'GCC Digital Assets Strategy Q2 2026'",
 			),
-		framework: z.enum(["scr", "swot", "executive_summary"]).describe(
-			"Structural framework: 'scr' for Situation-Complication-Resolution, " +
-				"'swot' for SWOT analysis, 'executive_summary' for key findings + recommendations",
-		),
+		framework: z
+			.enum(["scr", "swot", "executive_summary"])
+			.describe(
+				"Structural framework: 'scr' for Situation-Complication-Resolution, " +
+					"'swot' for SWOT analysis, 'executive_summary' for key findings + recommendations",
+			),
 		presenter: z
 			.string()
 			.default("CSO Office")
