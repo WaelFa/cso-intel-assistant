@@ -33,10 +33,7 @@ export default function StrategicOutputCard({
   onRefresh,
 }: StrategicOutputCardProps) {
   const handleDownload = (pres: GeneratedPresentation) => {
-    const base =
-      process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3141";
-    const url = `${base}${pres.downloadUrl}`;
-    window.open(url, "_blank");
+    window.open(pres.downloadUrl, "_blank");
   };
 
   return (

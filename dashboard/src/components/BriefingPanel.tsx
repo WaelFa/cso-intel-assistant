@@ -41,9 +41,7 @@ export default function BriefingPanel() {
   const onRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3141";
-      await fetch(`${backendUrl}/api/briefing/refresh`, {
+      await fetch("/api/briefing/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ focus: briefingFilter }),

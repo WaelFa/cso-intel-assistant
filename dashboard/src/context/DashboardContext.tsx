@@ -2,8 +2,11 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3141";
+// Empty string → relative paths → Next.js rewrites proxy to the
+// Hono server (configured in next.config.ts). In dev this still
+// works because Next.js proxies to BACKEND_INTERNAL_URL, which
+// defaults to http://localhost:3141.
+const BACKEND_URL = "";
 
 // Types matching backend models
 export interface StoredDocument {
@@ -246,16 +249,7 @@ interface DashboardContextProps {
 
   userName: string | null;
   hasOnboarded: boolean;
-  setUserName: (name: string, agentName?: string) => Promise<boolean>;
-
-  // Backend connection health. `checking` on mount; `waking` if a
-  // health probe is taking longer than the cold-start threshold
-  // (Render free tier sleeps the container after 15 min idle, so
-  // the first request after a sleep takes 30-50s); `online` once
-  // a probe succeeds; `error` if a probe fails outright.
-  backendStatus: "checking" | "waking" | "online" | "error";
-  inFlightRequests: number;
-  checkBackendHealth: () => Promise<void>;
+  setUserName: (name: string, agentName?: string) => void;
 
   // Backgrounded Sub-Agent Tasks (Stubs)
   backgroundTasks: any[];
@@ -563,10 +557,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const setUserName = async (
-    name: string,
-    agentName?: string,
-  ): Promise<boolean> => {
+  const setUserName = (name: string, agentName?: string) => {
     const trimmed = name.trim();
     setUserNameState(trimmed || null);
     setHasOnboarded(true);
@@ -580,40 +571,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     if (trimmed) settingsPayload.userName = trimmed;
     if (agentName?.trim()) settingsPayload.agentName = agentName.trim();
     if (Object.keys(settingsPayload).length > 0) {
-      try {
-        return await saveSettings(settingsPayload);
-      } catch (err) {
+      saveSettings(settingsPayload).catch((err) => {
         console.error("Failed to sync onboarding to settings backend:", err);
-        return false;
-      }
+      });
     }
-    return true;
-  };
-
-  // ── Backend health + in-flight tracking ────────────────────────
-  // We probe `${BACKEND_URL}/agents` on mount and again whenever a
-  // request takes longer than the cold-start threshold. While
-  // waking, the UI shows a "Waking up the backend…" banner so the
-  // user understands the 30-50s delay on the first click after
-  // Render puts the free-tier container to sleep.
-  //
-  // `inFlightRequests` is incremented by every fetch the app makes
-  // and decremented on settle. It's surfaced as a counter so the
-  // status pill can show a subtle "busy" indicator (e.g. the avatar
-  // ring can pulse) without blocking the UI.
-  const [backendStatus, setBackendStatus] =
-    useState<"checking" | "waking" | "online" | "error">("checking");
-  const [inFlightRequests, setInFlightRequests] = useState(0);
-  const inflightRef = useRef(0);
-  const wakingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const incInFlight = () => {
-    inflightRef.current += 1;
-    setInFlightRequests(inflightRef.current);
-  };
-  const decInFlight = () => {
-    inflightRef.current = Math.max(0, inflightRef.current - 1);
-    setInFlightRequests(inflightRef.current);
   };
 
   // Document Library States
@@ -923,7 +884,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     setIsSettingsSaving(true);
     setSettingsError(null);
     try {
-      const res = await trackedFetch(`${BACKEND_URL}/api/settings`, {
+      const res = await fetch(`${BACKEND_URL}/api/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(partial),
@@ -949,111 +910,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       setIsSettingsSaving(false);
     }
   };
-
-  // Probe the backend's `/agents` endpoint with a short timeout.
-  // Returns the resolved status without ever throwing. Cold-start
-  // budget is 2s — anything longer and we flip to "waking" so the
-  // UI can show a "backend is starting up" hint.
-  const checkBackendHealth = useCallback(async (): Promise<void> => {
-    const COLD_START_THRESHOLD_MS = 2000;
-    const PROBE_TIMEOUT_MS = 90_000;
-
-    if (wakingTimerRef.current) {
-      clearTimeout(wakingTimerRef.current);
-      wakingTimerRef.current = null;
-    }
-
-    setBackendStatus((prev) => (prev === "waking" ? prev : "checking"));
-
-    let timedOut = false;
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      setBackendStatus("waking");
-    }, COLD_START_THRESHOLD_MS);
-    const hardTimeoutId = window.setTimeout(() => {
-      timedOut = true;
-      setBackendStatus((prev) => (prev === "waking" ? "error" : prev));
-    }, PROBE_TIMEOUT_MS);
-
-    incInFlight();
-    try {
-      const controller = new AbortController();
-      const abortTimer = window.setTimeout(
-        () => controller.abort(),
-        PROBE_TIMEOUT_MS,
-      );
-      const res = await fetch(`${BACKEND_URL}/agents`, {
-        method: "GET",
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      window.clearTimeout(abortTimer);
-      window.clearTimeout(timeoutId);
-      window.clearTimeout(hardTimeoutId);
-      void timedOut;
-      if (res.ok) {
-        setBackendStatus("online");
-      } else {
-        setBackendStatus("error");
-      }
-    } catch {
-      window.clearTimeout(timeoutId);
-      window.clearTimeout(hardTimeoutId);
-      // If the cold-start threshold already fired, leave the UI
-      // in the "waking" state — the backend may just be slow to
-      // come up. Only mark "error" if we hit the hard timeout.
-      setBackendStatus((prev) => (prev === "waking" ? prev : "error"));
-    } finally {
-      decInFlight();
-    }
-  }, []);
-
-  // Probe on mount. If the first request stalls past the cold-start
-  // threshold, the status flips to "waking" so the banner can show
-  // up. Re-probe every 30s while in "waking" state so the banner
-  // clears automatically once the container comes back.
-  //
-  // We use a ref for the latest status to avoid `setState` inside
-  // the polling callback (which would trip React's set-state-in-
-  // effect lint rule and trigger cascading renders).
-  const statusRef = useRef<"checking" | "waking" | "online" | "error">(
-    "checking",
-  );
-  useEffect(() => {
-    statusRef.current = backendStatus;
-  }, [backendStatus]);
-
-  useEffect(() => {
-    // Defer the initial probe to a microtask so it doesn't count
-    // as a synchronous setState during the effect commit.
-    const initialProbe = window.setTimeout(() => {
-      void checkBackendHealth();
-    }, 0);
-    const interval = window.setInterval(() => {
-      if (statusRef.current === "waking") {
-        void checkBackendHealth();
-      }
-    }, 30_000);
-    return () => {
-      window.clearTimeout(initialProbe);
-      window.clearInterval(interval);
-    };
-  }, [checkBackendHealth]);
-
-  // Thin wrapper around fetch that ticks the in-flight counter
-  // for the duration of the request. Used for any user-initiated
-  // call that should be reflected in the global busy indicator.
-  const trackedFetch = useCallback(
-    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      incInFlight();
-      try {
-        return await fetch(input, init);
-      } finally {
-        decInFlight();
-      }
-    },
-    [],
-  );
 
   // Backgrounded Sub-Agent Tasks (Mock implementations to allow compiling)
   const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
@@ -1334,7 +1190,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     };
 
     try {
-      const response = await trackedFetch(
+      const response = await fetch(
         `${BACKEND_URL}/agents/cso-intel-assistant/stream`,
         {
           method: "POST",
@@ -1701,7 +1557,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       const base64Content = event.target?.result as string;
 
       try {
-        const res = await trackedFetch(`${BACKEND_URL}/api/documents/upload`, {
+        const res = await fetch(`${BACKEND_URL}/api/documents/upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1739,7 +1595,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const res = await trackedFetch(`${BACKEND_URL}/api/documents/${id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/documents/${id}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -1820,10 +1676,6 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         userName,
         hasOnboarded,
         setUserName,
-
-        backendStatus,
-        inFlightRequests,
-        checkBackendHealth,
 
         backgroundTasks,
         hasUnseenBackgroundTask,

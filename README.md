@@ -345,93 +345,85 @@ A scripted smoke test for the document upload endpoint is in `scripts/test-uploa
 
 ---
 
-## Deploying (free demo)
+## Deploying (Railway, $5/mo Hobby)
 
-The repo ships with a `render.yaml` blueprint and a Vercel-friendly dashboard, so a public demo URL is one click per platform. Total cost: **$0** (free tiers).
+This project ships ready to deploy on Railway as **two services on a single Hobby plan** ($5/mo, ~$5 of usage included):
+
+- **API service** — the Hono + VoltAgent backend, built from the repo's `Dockerfile`. Exposes the agent API on an internal port.
+- **Web service** — the Next.js dashboard, built with Nixpacks. Proxies `/api/*`, `/agents/*`, `/tools/*`, `/workflows/*` to the API service via Next.js rewrites, so the browser sees a single origin.
 
 ### Architecture
 
 ```
                  ┌────────────────────────────────────┐
-                 │  Vercel (Hobby) — dashboard        │
-                 │  https://cso-intel-assistant.       │
-                 │          vercel.app                 │
+                 │  Railway — Web service (Next.js)   │
+                 │  https://<name>.up.railway.app     │
+                 │                                    │
+                 │  Same-origin to the browser.       │
+                 │  /api/* /agents/* /tools/*         │
+                 │  /workflows/* → proxy to API       │
                  └────────────────┬───────────────────┘
-                                  │ NEXT_PUBLIC_BACKEND_URL
+                                  │ BACKEND_INTERNAL_URL
+                                  │ (Railway private DNS)
                                   ▼
                  ┌────────────────────────────────────┐
-                 │  Render (Free Web Service) — API   │
-                 │  https://cso-intel-assistant-api.   │
-                 │          onrender.com              │
-                 │  (ephemeral filesystem — see below)│
+                 │  Railway — API service (Hono)      │
+                 │  cso-intel-assistant-api.           │
+                 │    railway.internal:3141            │
+                 │  (Docker, port 3141)                │
                  └────────────────────────────────────┘
 ```
 
 ### One-time setup
 
-1. **Push to GitHub.** Render and Vercel both deploy from git.
+1. **Push to GitHub.** Both services deploy from the same repo.
 
-2. **Backend on Render.**
-   - Render Dashboard → **New** → **Blueprint** → pick the repo.
-   - Render reads `render.yaml` and creates `cso-intel-assistant-api` on the free plan.
-   - In the service's **Environment** tab, set:
-     - `OPENAI_API_KEY` — your OpenRouter key (required).
-     - `EXA_API_KEY` — optional, enables live web search.
-   - Wait for the first deploy. Confirm with:
-     ```
-     curl https://cso-intel-assistant-api.onrender.com/agents
-     ```
-     The first request after the service spins down takes ~30-50s (free tier sleeps after 15 min idle).
+2. **Create the API service.**
+   - Railway Dashboard → **New Project** → **Deploy from GitHub repo** → pick this repo.
+   - In the new service's **Settings**:
+     - **Root Directory**: leave at repo root (the Dockerfile is there).
+     - **Builder**: `Dockerfile` (auto-detected from `railway.json`).
+   - In **Variables**, set:
+     - `OPENAI_API_KEY` = your OpenRouter key (required).
+     - `EXA_API_KEY` = optional, enables live web search.
+     - `NODE_ENV` = `production`.
+   - **Networking** → **Generate Domain** if you want to curl the API directly. Otherwise the dashboard service talks to it via the internal DNS name.
 
-3. **Dashboard on Vercel.**
-   - Vercel Dashboard → **Add New Project** → import the same repo.
-   - **Root Directory** = `dashboard`.
-   - **Environment Variables**:
-     - `NEXT_PUBLIC_BACKEND_URL` = `https://cso-intel-assistant-api.onrender.com`
-     - `BACKEND_URL` = the same value (server-side only, used by the `/api/chat` proxy).
-   - Deploy. Vercel prints `https://cso-intel-assistant.vercel.app`.
+3. **Create the Web (dashboard) service.**
+   - In the same project → **+ New** → **GitHub Repo** → pick the same repo.
+   - In **Settings**:
+     - **Root Directory**: `dashboard`.
+     - **Builder**: `Nixpacks` (auto-detected from `dashboard/railway.json`).
+   - In **Variables**, set:
+     - `BACKEND_INTERNAL_URL` = `http://cso-intel-assistant-api.railway.internal:3141`
+       (replace `cso-intel-assistant-api` with whatever you named the API service; the `.railway.internal` domain is the private DNS that Railway provides for inter-service communication).
+   - **Networking** → **Generate Domain** to get a public URL like `https://cso-intel-assistant.up.railway.app`.
 
-4. **Close the CORS loop.**
-   - Back in Render → service **Environment** → set `DASHBOARD_URL` to the Vercel URL.
-   - Render auto-redeploys. After that, the dashboard can call the API without CORS errors.
+4. **Smoke test.** Open the dashboard's public URL, send a chat message. The Next.js server proxies the call to the API service and streams the response back.
 
-5. **Smoke test.** Open the Vercel URL in an incognito tab, send a chat message. The first message wakes the Render service and may take ~30s; subsequent ones are fast.
+### Cost
 
-### Cost & limits
+- **Railway Hobby**: $5/mo of included usage, then pay-as-you-go. Two small services on the Hobby plan comfortably fit in that envelope.
+- **OpenRouter**: pay per token, ~$0.05 per 20-min demo with the default `openai/gpt-4o-mini` model.
+- **Exa.ai free tier**: 1,000 searches/mo (only consumed when you refresh a briefing).
 
-| Item | Limit | What we use |
-|---|---|---|
-| Render Web Service | 750 hrs/mo, sleeps after 15 min idle | Single instance |
-| Render persistent disk | **Not available on the free plan** | n/a — see below |
-| Vercel Hobby | 100 GB bandwidth/mo, no sleep | Static-ish Next.js |
-| OpenRouter | Pay per token | ~$0.05 per 20-min demo |
-| Exa.ai free tier | 1,000 searches/mo | ~3 per manual refresh |
+### State & persistence
 
-### Ephemeral state — read this before your demo
+Railway services **do persist local files between restarts** (their container filesystem is mounted, unlike serverless platforms). So on the API service:
+- LibSQL conversation memory in `/app/.voltagent/memory.db` survives restarts.
+- Briefing snapshots in `/app/data/briefings/` survive.
+- Generated `.pptx` files in `/app/data/presentations/` survive.
 
-Render's free plan no longer supports persistent disks (as of 2025). That means **every cold start wipes**:
+The **in-memory vector store** still resets on every restart (it lives in RAM by design). The seed corpus re-loads from `data/seed/` on every boot, so the assistant has its baseline knowledge immediately.
 
-- LibSQL conversation memory (`memory.db` in `/app/.voltagent`)
-- Cached briefing snapshots (`data/briefings/*.json`)
-- Generated `.pptx` files (`data/presentations/`)
-- The in-memory vector store (RAG) — was already ephemeral
-
-The **seed corpus re-loads on every boot** from `data/seed/`, so the demo still works — you just lose prior chat history, generated decks, and briefing history. The first chat message after a cold start triggers boot-recovery, which prepares a fresh daily briefing.
-
-#### Demo-day runbook
-
-1. **~60s before the demo:** open the Vercel URL in an incognito tab and send any chat message. This wakes the Render service (and you eat the 30-50s cold start yourself instead of in front of the audience).
-2. **Once the first reply lands:** demo normally. Chat, upload a doc, refresh a briefing, generate a deck — all works.
-3. **If the demo takes a long break (>15 min):** the service may sleep again. Send a quick message to re-wake it before continuing.
-
-If you need durable state for an actual production deployment, the two cheap options are:
-- **Turso free tier** (hosted libSQL, wire-compatible with `@voltagent/libsql`) — swap the `file:` URL for a Turso URL in `src/index.ts:92` and you get persistent conversation memory.
-- **Render's paid plan** (starts at $7/mo) — restores persistent disks. `.pptx` files and briefing snapshots would then survive restarts.
+For true durability across deploys, swap the local LibSQL file for a hosted libSQL (Turso) or any external database.
 
 ### Gotchas
 
 - **No auth.** The URL is semi-public. Don't upload documents containing real PII.
-- **Custom domains** can be added on both platforms for free, but the default `*.onrender.com` and `*.vercel.app` URLs are sufficient for a demo.
+- **Custom domains**: add one in the Web service's **Settings** → **Domains**. Railway issues a free Let's Encrypt cert.
+- **SSE streaming** (chat responses) traverses the Next.js proxy via `rewrites`. If you ever see SSE buffering, check the dashboard service's proxy buffering settings.
+- **CORS** is still set on the Hono server for `localhost:3000`/`3001` (local dev) but is a no-op in production since all calls are same-origin from the browser's view.
 
 
 ---

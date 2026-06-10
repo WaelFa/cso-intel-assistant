@@ -5,7 +5,6 @@ import { DashboardProvider } from "../context/DashboardContext";
 import OnboardingModal from "../components/OnboardingModal";
 import CommandPalette from "../components/CommandPalette";
 import Sidebar from "../components/Sidebar";
-import BackendStatusPill from "../components/BackendStatusPill";
 
 const mulish = Mulish({
   variable: "--font-mulish",
@@ -44,7 +43,6 @@ export default function RootLayout({
             {children}
             <OnboardingModal />
             <CommandPalette />
-            <BackendStatusPill />
           </div>
         </DashboardProvider>
       </body>

@@ -227,27 +227,17 @@ new VoltAgent({
 	workflows,
 	server: honoServer({
 		// CORS — the Next.js dashboard at :3000 fetches this server
-		// at :3141 directly (not via a Next.js API route proxy).
-		// We allow both ports so the dev workflow keeps working
-		// alongside any production deployment on a different host.
+		// at :3141 directly during local dev. In production, the
+		// dashboard proxies through its own server (see
+		// dashboard/next.config.ts rewrites), so all calls appear
+		// same-origin to the browser and CORS is unused.
 		cors: {
-			origin: (origin) => {
-				if (!origin) return origin;
-				const allowed = new Set<string>([
-					"http://localhost:3000",
-					"http://127.0.0.1:3000",
-					"http://localhost:3001",
-					"http://127.0.0.1:3001",
-				]);
-				const envOrigins = [
-					process.env.DASHBOARD_URL,
-					process.env.RENDER_EXTERNAL_URL,
-				]
-					.filter((v): v is string => typeof v === "string" && v.length > 0)
-					.flatMap((v) => [v, v.replace(/\/$/, "")]);
-				for (const o of envOrigins) allowed.add(o);
-				return allowed.has(origin) ? origin : null;
-			},
+			origin: [
+				"http://localhost:3000",
+				"http://127.0.0.1:3000",
+				"http://localhost:3001",
+				"http://127.0.0.1:3001",
+			],
 			allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 			allowHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
 			credentials: true,
