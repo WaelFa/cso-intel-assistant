@@ -383,10 +383,11 @@ This project ships ready to deploy on Railway as **two services on a single Hobb
    - In the new service's **Settings**:
      - **Root Directory**: leave at repo root (the Dockerfile is there).
      - **Builder**: `Dockerfile` (auto-detected from `railway.json`).
-   - In **Variables**, set:
-     - `OPENAI_API_KEY` = your OpenRouter key (required).
-     - `EXA_API_KEY` = optional, enables live web search.
-     - `NODE_ENV` = `production`.
+    - In **Variables**, set:
+      - `OPENAI_API_KEY` = your OpenRouter key (required).
+      - `EXA_API_KEY` = optional, enables live web search.
+      - `NODE_ENV` = `production`.
+      - `MODEL_ID` (optional) — defaults to `openai/gpt-4o-mini`. **Use a non-reasoning model** (e.g. `openai/gpt-4o-mini`, `openai/gpt-4.1-mini`, `anthropic/claude-3-5-haiku`). Reasoning models (`openai/gpt-5-mini`, `openai/o3-mini`, `deepseek/deepseek-r1`) make the supervisor loop on `generate_daily_briefing` and never delegate to the `executive-communications` sub-agent that owns `generate_strategic_presentation` — the symptom is no `.pptx` files appearing on the dashboard. If you want a reasoning model for some flows, override it per-sub-agent in `src/agents/agents.ts` (e.g. only on `executive-communications`), not globally.
    - **Networking** → **Generate Domain** if you want to curl the API directly. Otherwise the dashboard service talks to it via the internal DNS name.
 
 3. **Create the Web (dashboard) service.**

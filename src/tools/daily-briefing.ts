@@ -47,6 +47,12 @@ const briefingOutputSchema = z.object({
 	monitoring: z.array(briefingItemSchema),
 	opportunities: z.array(briefingItemSchema),
 	kpis: z.array(kpiSchema),
+	// Optional de-duplication flag: true when this exact (date, focus)
+	// combination was already returned earlier in the same process.
+	// Lets the supervisor detect "you already have the answer" and
+	// stop looping on identical calls.
+	cached: z.boolean().optional(),
+	note: z.string().optional(),
 });
 
 // ── Mock Data ─────────────────────────────────────────────────────
@@ -135,6 +141,12 @@ const KPIS: z.infer<typeof kpiSchema>[] = [
 	{ label: "Deal Pipeline", value: "$9.4B", delta: "-4.1% QoQ", trend: "down" },
 ];
 
+// In-process cache of (date|focus) combos already returned. The
+// supervisor historically looped on this tool, calling it 8–10 times
+// in a single turn. Tracking the keys lets us flag repeat calls
+// with `cached: true` so the model can see the stop signal.
+const briefingCallCache = new Set<string>();
+
 // ── Tool ──────────────────────────────────────────────────────────
 
 export const dailyBriefingTool = createTool({
@@ -152,14 +164,34 @@ export const dailyBriefingTool = createTool({
 		const filterByDomain = (items: typeof CRITICAL) =>
 			focus === "all" ? items : items.filter((i) => i.domain === focus);
 
+		const date = new Date().toISOString().slice(0, 10);
+		// De-duplication signal: track which (date, focus) combos have
+		// been computed in this process. The supervisor historically
+		// looped on this tool, calling it 8–10 times in a single turn
+		// because each call returned ok in ~1ms with no marker that
+		// the data was identical. By flagging repeat calls with
+		// cached: true, we give the model an explicit stop signal:
+		// "you have the answer, do not call me again".
+		const cacheKey = `${date}|${focus}`;
+		const cached = briefingCallCache.has(cacheKey);
+		briefingCallCache.add(cacheKey);
+
 		const briefing = {
-			date: new Date().toISOString().slice(0, 10),
+			date,
 			generatedAt: new Date().toISOString(),
 			focus,
 			critical: filterByDomain(CRITICAL),
 			monitoring: filterByDomain(MONITORING),
 			opportunities: filterByDomain(OPPORTUNITIES),
 			kpis: focus === "all" || focus === "market" ? KPIS : [],
+			cached,
+			// Hint surfaced to the model the second+ time it calls
+			// this tool in the same turn. The supervisor system
+			// prompt instructs the model to stop calling when it
+			// sees this flag.
+			note: cached
+				? "Same briefing already returned earlier in this turn. Do not call again — synthesise your answer now."
+				: undefined,
 		};
 
 		return briefing;

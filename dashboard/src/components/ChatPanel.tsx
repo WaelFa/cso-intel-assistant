@@ -260,6 +260,31 @@ export default function ChatPanel() {
     const elements: React.ReactNode[] = [];
     let match;
 
+    // The LLM sometimes invents absolute hostnames for relative download URLs
+    // (e.g. "https://example.com/api/presentations/.../download" or
+    // "https://yourdomain.com/api/presentations/.../download"). These would
+    // navigate the user off the dashboard. Strip the fake host so the link
+    // resolves against the dashboard's own origin (which proxies the API
+    // through Next.js rewrites).
+    const sanitizeApiUrl = (url: string): string => {
+      try {
+        const lower = url.toLowerCase();
+        const looksLikeFakeHost =
+          lower.includes("example.com") ||
+          lower.includes("yourdomain") ||
+          lower.includes("example.org") ||
+          lower.includes("example.io");
+        if (looksLikeFakeHost && url.includes("/api/presentations/")) {
+          // Strip scheme + fake host, keep the relative path
+          const pathIdx = url.indexOf("/api/presentations/");
+          return url.slice(pathIdx);
+        }
+        return url;
+      } catch {
+        return url;
+      }
+    };
+
     const parseBoldAndUrls = (str: string) => {
       const parts = str.split(/(\*\*.*?\*\*)/g);
       return parts.map((part, i) => {
@@ -274,10 +299,11 @@ export default function ChatPanel() {
         const subParts = part.split(urlRegex);
         return subParts.map((subPart, j) => {
           if (subPart.match(/^https?:\/\//)) {
+            const safeHref = sanitizeApiUrl(subPart);
             return (
               <a
                 key={`${i}-${j}`}
-                href={subPart}
+                href={safeHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
@@ -287,7 +313,7 @@ export default function ChatPanel() {
                   wordBreak: "break-all",
                 }}
               >
-                {subPart}
+                {safeHref}
               </a>
             );
           }
@@ -303,7 +329,7 @@ export default function ChatPanel() {
       }
 
       const anchor = match[1];
-      const url = match[2];
+      const url = sanitizeApiUrl(match[2]);
 
       elements.push(
         <a

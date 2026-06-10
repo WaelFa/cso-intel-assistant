@@ -11,6 +11,8 @@ export default function AgentStatusPanel() {
     setSelectedAgentId,
     presentations,
     isPresentationLoading,
+    freshPresentationIds,
+    markPresentationSeen,
     fetchPresentations,
   } = useAgents();
 
@@ -62,6 +64,8 @@ export default function AgentStatusPanel() {
                   <StrategicOutputCard
                     presentations={presentations}
                     isPresentationLoading={isPresentationLoading}
+                    freshPresentationIds={freshPresentationIds}
+                    onMarkPresentationSeen={markPresentationSeen}
                     onRefresh={fetchPresentations}
                   />
                 </div>

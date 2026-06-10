@@ -4,6 +4,36 @@ import Exa from "exa-js";
 let exaInstance: any = null;
 let isInitialized = false;
 
+/**
+ * Time one Exa SDK call and log it. Picked up by the existing Pino
+ * logger in stdout (and in Railway's `railway logs` in production).
+ * Used by every searchXxx() function so we can see per-call network
+ * latency alongside the agent-level timing from latency-hooks.ts.
+ */
+async function timedExaCall<T>(
+	label: string,
+	query: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	const t0 = Date.now();
+	try {
+		const out = await fn();
+		const ms = Date.now() - t0;
+		// Keep the log line greppable; trim the query to keep logs compact.
+		const q = query.length > 120 ? `${query.slice(0, 117)}…` : query;
+		console.log(
+			`[latency] ⏱ exa-call label=${label} elapsed=${ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`} query="${q}"`,
+		);
+		return out;
+	} catch (err) {
+		const ms = Date.now() - t0;
+		console.log(
+			`[latency] ⏱ exa-call label=${label} elapsed=${ms}ms status=error err=${err instanceof Error ? err.message : String(err)}`,
+		);
+		throw err;
+	}
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: return client instance
 function getExaClient(): any {
 	if (!isInitialized) {
@@ -149,33 +179,39 @@ export async function searchMarketIntel(
 			`[exa] searchMarketIntel QUERY        query="${query}" domains=${MARKET_DOMAINS.length} startPublishedDate=${startPublishedDate ?? "none"} numResults=5`,
 		);
 		// First attempt with domain restrictions
-		response = await exa.searchAndContents(query, {
-			numResults: 5,
-			highlights: true,
-			startPublishedDate,
-			includeDomains: MARKET_DOMAINS,
-		});
+		response = await timedExaCall("market.primary", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 5,
+				highlights: true,
+				startPublishedDate,
+				includeDomains: MARKET_DOMAINS,
+			}),
+		);
 
 		// Fallback if no results found on specific domains
 		if (!response.results || response.results.length === 0) {
 			console.log(
 				"[exa] searchMarketIntel DOMAIN FALLBACK → retrying without domain filter",
 			);
-			response = await exa.searchAndContents(query, {
-				numResults: 5,
-				highlights: true,
-				startPublishedDate,
-			});
+			response = await timedExaCall("market.fallback", query, () =>
+				exa.searchAndContents(query, {
+					numResults: 5,
+					highlights: true,
+					startPublishedDate,
+				}),
+			);
 		}
 	} catch (error) {
 		console.warn(
 			"[exa] searchMarketIntel ERROR → falling back to unfiltered query:",
 			error,
 		);
-		response = await exa.searchAndContents(query, {
-			numResults: 5,
-			highlights: true,
-		});
+		response = await timedExaCall("market.error-fallback", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 5,
+				highlights: true,
+			}),
+		);
 	}
 
 	const results = response.results || [];
@@ -321,30 +357,36 @@ export async function searchCompetitorIntel(
 		console.log(
 			`[exa] searchCompetitorIntel QUERY        query="${query}" domains=${COMPETITOR_DOMAINS.length} numResults=4`,
 		);
-		response = await exa.searchAndContents(query, {
-			numResults: 4,
-			highlights: true,
-			includeDomains: COMPETITOR_DOMAINS,
-		});
+		response = await timedExaCall("competitor.primary", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 4,
+				highlights: true,
+				includeDomains: COMPETITOR_DOMAINS,
+			}),
+		);
 
 		if (!response.results || response.results.length === 0) {
 			console.log(
 				"[exa] searchCompetitorIntel DOMAIN FALLBACK → retrying without domain filter",
 			);
-			response = await exa.searchAndContents(query, {
-				numResults: 4,
-				highlights: true,
-			});
+			response = await timedExaCall("competitor.fallback", query, () =>
+				exa.searchAndContents(query, {
+					numResults: 4,
+					highlights: true,
+				}),
+			);
 		}
 	} catch (error) {
 		console.warn(
 			"[exa] searchCompetitorIntel ERROR → falling back to unfiltered query:",
 			error,
 		);
-		response = await exa.searchAndContents(query, {
-			numResults: 4,
-			highlights: true,
-		});
+		response = await timedExaCall("competitor.error-fallback", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 4,
+				highlights: true,
+			}),
+		);
 	}
 
 	const results = response.results || [];
@@ -491,30 +533,36 @@ export async function searchRegulatoryChanges(
 		console.log(
 			`[exa] searchRegulatoryChanges QUERY        query="${query}" domains=${REGULATORY_DOMAINS.length} numResults=5`,
 		);
-		response = await exa.searchAndContents(query, {
-			numResults: 5,
-			highlights: true,
-			includeDomains: REGULATORY_DOMAINS,
-		});
+		response = await timedExaCall("regulatory.primary", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 5,
+				highlights: true,
+				includeDomains: REGULATORY_DOMAINS,
+			}),
+		);
 
 		if (!response.results || response.results.length === 0) {
 			console.log(
 				"[exa] searchRegulatoryChanges DOMAIN FALLBACK → retrying without domain filter",
 			);
-			response = await exa.searchAndContents(query, {
-				numResults: 5,
-				highlights: true,
-			});
+			response = await timedExaCall("regulatory.fallback", query, () =>
+				exa.searchAndContents(query, {
+					numResults: 5,
+					highlights: true,
+				}),
+			);
 		}
 	} catch (error) {
 		console.warn(
 			"[exa] searchRegulatoryChanges ERROR → falling back to unfiltered query:",
 			error,
 		);
-		response = await exa.searchAndContents(query, {
-			numResults: 5,
-			highlights: true,
-		});
+		response = await timedExaCall("regulatory.error-fallback", query, () =>
+			exa.searchAndContents(query, {
+				numResults: 5,
+				highlights: true,
+			}),
+		);
 	}
 
 	const results = response.results || [];

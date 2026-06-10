@@ -61,3 +61,4 @@ data/briefings/*.json
 !data/briefings/.gitkeep
 data/presentations/*.pptx
 !data/presentations/.gitkeep
+data/voltagent/

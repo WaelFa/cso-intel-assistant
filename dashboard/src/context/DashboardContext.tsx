@@ -237,6 +237,8 @@ interface DashboardContextProps {
   setSelectedAgentId: (id: string | null) => void;
   presentations: GeneratedPresentation[];
   isPresentationLoading: boolean;
+  freshPresentationIds: Set<string>;
+  markPresentationSeen: (id: string) => void;
   fetchPresentations: () => Promise<void>;
   animateSubAgents: (text: string) => void;
   resetAgentStatuses: () => void;
@@ -607,6 +609,12 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   // Strategic Output Agent State — Presentations
   const [presentations, setPresentations] = useState<GeneratedPresentation[]>([]);
   const [isPresentationLoading, setIsPresentationLoading] = useState(false);
+  // Set of presentation IDs that were added in the current session. Used by
+  // StrategicOutputCard to apply a brief glow + slide-in animation to fresh
+  // decks (vs. decks that were already on disk from a previous session).
+  const [freshPresentationIds, setFreshPresentationIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   // Selected Agent for Detail Side Drawer
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -709,12 +717,46 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setPresentations(data);
+        // Capture any IDs that just appeared as "fresh" so the card can
+        // animate them in. The set persists for the session so decks
+        // generated earlier in the same session still highlight on
+        // initial mount, but we drop IDs older than the most recent
+        // refresh to bound memory.
+        setFreshPresentationIds((prev) => {
+          const next = new Set<string>();
+          for (const p of data as GeneratedPresentation[]) {
+            if (prev.has(p.id) || isNewThisSession(p.generatedAt)) {
+              next.add(p.id);
+            }
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error("Failed to load presentations:", err);
     } finally {
       setIsPresentationLoading(false);
     }
+  }, []);
+
+  // A presentation counts as "fresh this session" if it was generated
+  // within the last 10 minutes (long enough to cover the slowest pptx
+  // generation + the time the user spends reading the chat reply).
+  const isNewThisSession = (iso: string) => {
+    const ageMs = Date.now() - new Date(iso).getTime();
+    return ageMs >= 0 && ageMs < 10 * 60 * 1000;
+  };
+
+  // Called by StrategicOutputCard when a fresh-deck animation finishes
+  // (or when the user dismisses it) so we stop re-animating it on
+  // subsequent re-renders.
+  const markPresentationSeen = useCallback((id: string) => {
+    setFreshPresentationIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }, []);
 
   const fetchAgentConfigs = async () => {
@@ -1446,9 +1488,16 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
                   if (toolName === "generate_daily_briefing") {
                     updateAgentMetrics("cso-intel-assistant", out);
                   }
-                  if (toolName === "generate_strategic_presentation") {
-                    fetchPresentations();
-                  }
+                }
+                // Refresh the Strategic Output card whenever a new
+                // presentation was produced, regardless of whether the
+                // tool ran on the supervisor or was delegated to the
+                // executive-communications sub-agent. Previously the
+                // sub-agent branch fell through without refreshing,
+                // so freshly generated decks never appeared on the
+                // dashboard until the user clicked the refresh button.
+                if (eventData.toolName === "generate_strategic_presentation") {
+                  fetchPresentations();
                 }
               }
 
@@ -1665,6 +1714,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         setSelectedAgentId,
         presentations,
         isPresentationLoading,
+        freshPresentationIds,
+        markPresentationSeen,
         fetchPresentations,
         animateSubAgents,
         resetAgentStatuses,

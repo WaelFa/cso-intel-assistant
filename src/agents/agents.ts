@@ -10,6 +10,7 @@
 // ──────────────────────────────────────────────────────────────────
 
 import { Agent, type Memory } from "@voltagent/core";
+import type { Logger } from "@voltagent/logger";
 import type { LanguageModel } from "ai";
 import {
 	COMPETITOR_INTEL_PROMPT,
@@ -31,6 +32,7 @@ import {
 	regulatoryTrackerTool,
 	riskIndicatorsTool,
 } from "../tools/index.js";
+import { createLatencyHooks } from "./latency-hooks.js";
 
 /** Shared config that every agent needs */
 interface AgentDeps {
@@ -38,10 +40,26 @@ interface AgentDeps {
 	memory?: Memory;
 	documentStore?: DocumentStore;
 	agentName?: string;
+	logger?: Logger;
 }
 
-/** Max tool-call steps for any single agent turn. Bounds runaway loops. */
-const AGENT_MAX_STEPS = 8;
+/** Max tool-call steps per agent turn. Bounds runaway loops.
+ *
+ *  The supervisor needs the most headroom: a single user request can
+ *  legitimately fan out to a direct tool (e.g. generate_daily_briefing)
+ *  AND a sub-agent handoff (e.g. executive-communications for a deck)
+ *  AND a follow-up synthesis step, which is 3 turns of LLM round-trips
+ *  minimum. Setting this to 10 lets the supervisor finish a complex
+ *  multi-agent request without truncating on `finishReason: "tool-calls"`
+ *  and leaving the user with no visible response.
+ *
+ *  Sub-agents are bounded tighter (4 steps) because each one is a
+ *  single-purpose specialist with at most 1–2 tools; if a sub-agent
+ *  can't answer in 4 tool calls, the supervisor's delegation prompt
+ *  needs tightening, not a higher step cap.
+ */
+const SUPERVISOR_MAX_STEPS = 10;
+const SUB_AGENT_MAX_STEPS = 4;
 
 // ── Sub-Agents (specialists) ──────────────────────────────────────
 
@@ -55,13 +73,14 @@ const AGENT_MAX_STEPS = 8;
  * They receive a task, process it, and return a result.
  * Only the supervisor maintains conversation history.
  */
-export function createMarketIntelAgent({ model }: AgentDeps) {
+export function createMarketIntelAgent({ model, logger }: AgentDeps) {
 	return new Agent({
 		name: "market-intelligence",
 		instructions: MARKET_INTEL_PROMPT,
 		model,
 		tools: [marketIntelligenceTool],
-		maxSteps: AGENT_MAX_STEPS,
+		maxSteps: SUB_AGENT_MAX_STEPS,
+		hooks: logger ? createLatencyHooks(logger) : undefined,
 	});
 }
 
@@ -71,13 +90,14 @@ export function createMarketIntelAgent({ model }: AgentDeps) {
  *
  * Tools: track_regulatory_changes (jurisdiction × sector × severity filter)
  */
-export function createRegulatoryIntelAgent({ model }: AgentDeps) {
+export function createRegulatoryIntelAgent({ model, logger }: AgentDeps) {
 	return new Agent({
 		name: "regulatory-intelligence",
 		instructions: REGULATORY_INTEL_PROMPT,
 		model,
 		tools: [regulatoryTrackerTool],
-		maxSteps: AGENT_MAX_STEPS,
+		maxSteps: SUB_AGENT_MAX_STEPS,
+		hooks: logger ? createLatencyHooks(logger) : undefined,
 	});
 }
 
@@ -87,13 +107,14 @@ export function createRegulatoryIntelAgent({ model }: AgentDeps) {
  *
  * Tools: analyze_competitor (SWOT-shaped benchmarking)
  */
-export function createCompetitorIntelAgent({ model }: AgentDeps) {
+export function createCompetitorIntelAgent({ model, logger }: AgentDeps) {
 	return new Agent({
 		name: "competitive-intelligence",
 		instructions: COMPETITOR_INTEL_PROMPT,
 		model,
 		tools: [competitorAnalysisTool],
-		maxSteps: AGENT_MAX_STEPS,
+		maxSteps: SUB_AGENT_MAX_STEPS,
+		hooks: logger ? createLatencyHooks(logger) : undefined,
 	});
 }
 
@@ -106,13 +127,14 @@ export function createCompetitorIntelAgent({ model }: AgentDeps) {
  *   - draft_executive_content (structured scaffold the agent fills with prose)
  *   - generate_strategic_presentation (real .pptx file generation)
  */
-export function createExecCommsAgent({ model }: AgentDeps) {
+export function createExecCommsAgent({ model, logger }: AgentDeps) {
 	return new Agent({
 		name: "executive-communications",
 		instructions: EXEC_COMMS_PROMPT,
 		model,
 		tools: [draftContentTool, generatePresentationTool],
-		maxSteps: AGENT_MAX_STEPS,
+		maxSteps: SUB_AGENT_MAX_STEPS,
+		hooks: logger ? createLatencyHooks(logger) : undefined,
 	});
 }
 
@@ -138,12 +160,36 @@ export function createSupervisorAgent({
 	memory,
 	documentStore,
 	agentName = "Jarvis",
-}: AgentDeps) {
-	// First, create the specialist sub-agents
-	const marketIntel = createMarketIntelAgent({ model });
-	const regulatoryIntel = createRegulatoryIntelAgent({ model });
-	const competitorIntel = createCompetitorIntelAgent({ model });
-	const execComms = createExecCommsAgent({ model });
+	logger,
+	// Optional pre-built sub-agents. When provided, the supervisor
+	// reuses these instances instead of creating its own. This lets
+	// the host module hold a direct reference to (e.g.) the
+	// executive-communications agent so the HTTP layer can dispatch
+	// presentation requests directly to it without going through the
+	// supervisor (the supervisor historically looped on
+	// generate_daily_briefing when asked to make a deck).
+	prebuiltSubAgents,
+}: AgentDeps & {
+	prebuiltSubAgents?: {
+		marketIntel?: ReturnType<typeof createMarketIntelAgent>;
+		regulatoryIntel?: ReturnType<typeof createRegulatoryIntelAgent>;
+		competitorIntel?: ReturnType<typeof createCompetitorIntelAgent>;
+		execComms?: ReturnType<typeof createExecCommsAgent>;
+	};
+}) {
+	// First, create the specialist sub-agents. Each gets the same
+	// logger so their latency traces land in the same Pino stream
+	// as the supervisor's. Reuse any pre-built instance passed in.
+	const marketIntel =
+		prebuiltSubAgents?.marketIntel ?? createMarketIntelAgent({ model, logger });
+	const regulatoryIntel =
+		prebuiltSubAgents?.regulatoryIntel ??
+		createRegulatoryIntelAgent({ model, logger });
+	const competitorIntel =
+		prebuiltSubAgents?.competitorIntel ??
+		createCompetitorIntelAgent({ model, logger });
+	const execComms =
+		prebuiltSubAgents?.execComms ?? createExecCommsAgent({ model, logger });
 
 	// Document tools are optional — only registered if a store was provided.
 	// This keeps the agent constructable in unit tests without seeding a store.
@@ -155,21 +201,101 @@ export function createSupervisorAgent({
 		: [];
 
 	// Then create the supervisor that orchestrates them
-	return new Agent({
+	const supervisor = new Agent({
 		name: "cso-intel-assistant",
 		instructions: getSupervisorPrompt(agentName),
 		model,
 		memory,
-		// Supervisor's own tools (in addition to its sub-agents)
+		// Supervisor's own tools (in addition to its sub-agents).
+		// Order matters: models default to whichever tool appears first
+		// in the schema when the user request is ambiguous. RAG tools go
+		// first because document-grounded answers are the most common
+		// CSO request, and the briefing tool goes last because it is
+		// almost never the right first move for a fresh, one-shot
+		// request (and historically caused loops on pptx requests).
 		tools: [
-			dailyBriefingTool,
+			...documentTools,
 			riskIndicatorsTool,
 			performanceMetricsTool,
-			...documentTools,
+			dailyBriefingTool,
 		],
 		// Sub-agents are registered here — VoltAgent automatically
 		// exposes them as tools the supervisor can call
 		subAgents: [marketIntel, regulatoryIntel, competitorIntel, execComms],
-		maxSteps: AGENT_MAX_STEPS,
+		maxSteps: SUPERVISOR_MAX_STEPS,
+		hooks: logger ? createLatencyHooks(logger) : undefined,
 	});
+
+	// Expose the sub-agents and the supervisor on the returned object
+	// so the host module (src/index.ts) can hand the executive-communications
+	// instance to the Hono middleware that short-circuits presentation
+	// requests. We return the supervisor as-is for compatibility with
+	// existing callers; the extra fields are harmless.
+	const enhanced = Object.assign(supervisor, {
+		__subAgents: { marketIntel, regulatoryIntel, competitorIntel, execComms },
+	}) as typeof supervisor & {
+		__subAgents: {
+			marketIntel: ReturnType<typeof createMarketIntelAgent>;
+			regulatoryIntel: ReturnType<typeof createRegulatoryIntelAgent>;
+			competitorIntel: ReturnType<typeof createCompetitorIntelAgent>;
+			execComms: ReturnType<typeof createExecCommsAgent>;
+		};
+	};
+
+	// ── Deck-intent short-circuit on streamText ─────────────────────
+	// The supervisor (gpt-4o-mini) historically loops on
+	// generate_daily_briefing when asked to make a deck. Prompt-level
+	// fixes have not been reliable, so we wrap the supervisor's
+	// streamText method to detect deck intent from the user input
+	// and dispatch directly to the executive-communications sub-agent.
+	// The supervisor is bypassed entirely for this one intent class.
+	const DECK_INTENT_RE = /\b(presentation|deck|slides?|powerpoint|\.pptx)\b/i;
+	const originalStreamText = supervisor.streamText.bind(
+		supervisor,
+	) as typeof supervisor.streamText;
+	const wrappedStreamText = (async (
+		input: Parameters<typeof supervisor.streamText>[0],
+		options?: Parameters<typeof supervisor.streamText>[1],
+	) => {
+		// Extract a plain-text user input from the various shapes
+		// streamText accepts (string, UIMessage[], ModelMessage[]).
+		let text = "";
+		if (typeof input === "string") {
+			text = input;
+		} else if (Array.isArray(input)) {
+			for (const part of input) {
+				if (typeof part === "string") {
+					text += ` ${part}`;
+				} else if (part && typeof part === "object") {
+					const obj = part as Record<string, unknown>;
+					if (typeof obj.text === "string") {
+						text += ` ${obj.text}`;
+					} else if (Array.isArray(obj.content)) {
+						for (const c of obj.content) {
+							if (c && typeof c === "object" && "text" in c) {
+								text += ` ${String((c as { text: unknown }).text ?? "")}`;
+							}
+						}
+					} else if (typeof obj.content === "string") {
+						text += ` ${obj.content}`;
+					}
+				}
+			}
+		}
+		if (DECK_INTENT_RE.test(text)) {
+			// biome-ignore lint/suspicious/noConsole: routing decision is worth a visible log
+			console.log(
+				`[routing] Deck intent detected, dispatching to executive-communications sub-agent (inputPreview=${text.slice(0, 80)})`,
+			);
+			return execComms.streamText(
+				input as Parameters<typeof execComms.streamText>[0],
+				options as Parameters<typeof execComms.streamText>[1],
+			);
+		}
+		return originalStreamText(input, options);
+	}) as typeof supervisor.streamText;
+	// biome-ignore lint/suspicious/noExplicitAny: streamText is a method, not a property; we assign via any to swap the binding
+	(enhanced as any).streamText = wrappedStreamText;
+
+	return enhanced;
 }

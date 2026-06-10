@@ -148,7 +148,11 @@ const openrouter = createOpenAICompatible({
 		const incoming = (
 			body as { options?: { reasoning?: { effort?: unknown } } }
 		)?.options?.reasoning?.effort;
-		const effort: AllowedEffort = isAllowed(incoming) ? incoming : "medium";
+		// Default to "low" so reasoning models don't burn compute
+		// budget on internal chain-of-thought. The dashboard's
+		// reasoning-effort selector can still override this on a
+		// per-request basis ("low" | "medium" | "high").
+		const effort: AllowedEffort = isAllowed(incoming) ? incoming : "low";
 		return {
 			...body,
 			reasoning: {
@@ -159,6 +163,23 @@ const openrouter = createOpenAICompatible({
 	},
 });
 
+// Default is intentionally the fast, non-reasoning gpt-4o-mini.
+//
+// IMPORTANT: keep the supervisor on a non-reasoning model. Reasoning
+// models (gpt-5-mini, o3-mini, deepseek-r1, etc.) add several seconds
+// of wall-clock latency per call (visible as a long TTFB on
+// /agents/.../stream), burn hundreds of reasoning tokens on trivial
+// greetings, and — most importantly — loop on tool calls far more
+// aggressively, which is what caused the pptx regression: with a
+// reasoning model on Railway, the supervisor kept re-calling
+// generate_daily_briefing and exhausted maxSteps before delegating
+// to the executive-communications sub-agent that owns
+// generate_strategic_presentation.
+//
+// If you want a reasoning model, set it ONLY for the executive-comms
+// sub-agent (override per-agent in src/agents/agents.ts), not the
+// supervisor. Do not point MODEL_ID at a reasoning model on Railway
+// without also testing pptx generation end-to-end.
 const model = openrouter(process.env.MODEL_ID ?? "openai/gpt-4o-mini");
 
 // Embedding model — shared across the Memory (conversation
@@ -200,6 +221,7 @@ const agent = createSupervisorAgent({
 	memory,
 	documentStore,
 	agentName: initialSettings.agentName,
+	logger,
 });
 
 // ── 6. Workflows (Phase 3) ────────────────────────────────────────
@@ -327,9 +349,18 @@ new VoltAgent({
 
 			// ── Presentations ────────────────────────────────────────
 			// List all generated presentations with metadata.
+			// Path resolution MUST match src/tools/generate-presentation.ts
+			// (same `PRESENTATIONS_DIR` env override, same DATA_DIR fallback
+			// to `<repo>/data`). Inconsistency between the two meant the
+			// tool wrote to `<repo>/data/presentations` while the list
+			// endpoint read from `/app/data/presentations`, so the
+			// dashboard never saw locally-generated decks.
 			const PRESENTATIONS_DIR =
 				process.env.PRESENTATIONS_DIR ??
-				join(process.env.DATA_DIR ?? "/app/data", "presentations");
+				join(
+					process.env.DATA_DIR ?? resolve(process.cwd(), "data"),
+					"presentations",
+				);
 
 			app.get("/api/presentations", (c) => {
 				try {

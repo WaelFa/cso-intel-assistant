@@ -31,8 +31,7 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DATA_ROOT =
-	process.env.DATA_DIR ?? join(__dirname, "..", "..", "data");
+const DATA_ROOT = process.env.DATA_DIR ?? join(__dirname, "..", "..", "data");
 const BRIEFINGS_DIR = join(DATA_ROOT, "briefings");
 
 const rootLogger = createPinoLogger({
