@@ -16,7 +16,7 @@ ENV NODE_ENV=production
 RUN mkdir -p /app/data/voltagent
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist         ./dist
-COPY --from=build /app/data/seed    ./data/seed
+COPY --from=build /app/data/seed    /app/seed-image
 COPY package.json ./
 COPY scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

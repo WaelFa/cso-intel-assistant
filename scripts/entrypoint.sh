@@ -5,7 +5,7 @@ set -e
 echo "[entrypoint] start: DATA_DIR=${DATA_DIR:-/app/data}"
 
 DEST="${DATA_DIR:-/app/data}/seed"
-SRC="/app/data/seed"
+SRC="/app/seed-image"
 
 echo "[entrypoint] SRC=$SRC DEST=$DEST"
 echo "[entrypoint] checking /usr/bin/cp: $(which cp 2>/dev/null || echo 'not found')"
