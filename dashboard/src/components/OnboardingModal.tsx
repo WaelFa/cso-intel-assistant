@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Sparkles, ArrowRight } from "lucide-react";
+import { Sparkles, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import { useUser } from "../hooks/useUser";
+import { useDashboard } from "../context/DashboardContext";
 
 const CAPABILITIES = [
   { icon: "📊", label: "Daily intelligence briefings" },
@@ -13,10 +14,13 @@ const CAPABILITIES = [
 
 export default function OnboardingModal() {
   const { hasOnboarded, setUserName } = useUser();
+  const { backendStatus, checkBackendHealth } = useDashboard();
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
   const [agentName, setAgentName] = useState("Jarvis");
   const [visible, setVisible] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const agentInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -50,15 +54,39 @@ export default function OnboardingModal() {
 
   const handlePrevStep = () => {
     setStep(1);
+    setError(null);
   };
 
-  const submit = (e?: React.FormEvent) => {
+  const submit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const trimmedUser = name.trim();
     const trimmedAgent = agentName.trim() || "Jarvis";
     if (!trimmedUser) return;
-    setUserName(trimmedUser, trimmedAgent);
+    setIsSaving(true);
+    setError(null);
+    try {
+      const ok = await setUserName(trimmedUser, trimmedAgent);
+      if (!ok) {
+        setError(
+          "Couldn't save your name to the backend. We'll keep it locally — try again from Settings.",
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const backendReady = backendStatus === "online" || backendStatus === "waking";
+  const backendLabel =
+    backendStatus === "waking"
+      ? "Waking up the backend…"
+      : backendStatus === "checking"
+        ? "Connecting to backend…"
+        : backendStatus === "error"
+          ? "Backend unreachable — saved locally only"
+          : null;
 
   return (
     <div
@@ -89,14 +117,19 @@ export default function OnboardingModal() {
                 maxLength={40}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="given-name"
+                disabled={isSaving}
               />
               <button
                 type="submit"
                 className="onboarding-submit"
-                disabled={!name.trim()}
+                disabled={!name.trim() || isSaving}
                 aria-label="Continue"
               >
-                <ArrowRight size={16} strokeWidth={2.5} />
+                {isSaving ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <ArrowRight size={16} strokeWidth={2.5} />
+                )}
               </button>
             </form>
           </>
@@ -107,6 +140,24 @@ export default function OnboardingModal() {
               Choose a name for your strategic intelligence assistant (defaults to Jarvis).
             </p>
 
+            {backendLabel ? (
+              <div className="onboarding-backend-hint" role="status" aria-live="polite">
+                <Loader2 size={12} className="animate-spin" />
+                <span>{backendLabel}</span>
+                {backendStatus === "error" ? (
+                  <button
+                    type="button"
+                    className="onboarding-backend-retry"
+                    onClick={() => {
+                      void checkBackendHealth();
+                    }}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
             <form onSubmit={submit} className="onboarding-form">
               <input
                 ref={agentInputRef}
@@ -116,29 +167,43 @@ export default function OnboardingModal() {
                 value={agentName}
                 maxLength={40}
                 onChange={(e) => setAgentName(e.target.value)}
+                disabled={isSaving}
               />
               <button
                 type="submit"
                 className="onboarding-submit"
-                disabled={!agentName.trim()}
+                disabled={!agentName.trim() || isSaving || !backendReady}
                 aria-label="Finish"
               >
-                <ArrowRight size={16} strokeWidth={2.5} />
+                {isSaving ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <ArrowRight size={16} strokeWidth={2.5} />
+                )}
               </button>
             </form>
+
+            {error ? (
+              <div className="onboarding-error" role="alert">
+                <AlertCircle size={12} />
+                <span>{error}</span>
+              </div>
+            ) : null}
 
             <button
               type="button"
               onClick={handlePrevStep}
+              disabled={isSaving}
               style={{
                 background: "none",
                 border: "none",
                 color: "var(--text-muted)",
                 fontSize: "12px",
-                cursor: "pointer",
+                cursor: isSaving ? "not-allowed" : "pointer",
                 marginTop: "-8px",
                 marginBottom: "16px",
                 textDecoration: "underline",
+                opacity: isSaving ? 0.5 : 1,
               }}
             >
               Go Back
@@ -164,3 +229,4 @@ export default function OnboardingModal() {
     </div>
   );
 }
+

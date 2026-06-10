@@ -363,10 +363,7 @@ The repo ships with a `render.yaml` blueprint and a Vercel-friendly dashboard, s
                  │  Render (Free Web Service) — API   │
                  │  https://cso-intel-assistant-api.   │
                  │          onrender.com              │
-                 │                                    │
-                 │  Persistent disk (1 GB):           │
-                 │   /app/data     briefings, .pptx   │
-                 │   /app/.voltagent  LibSQL memory   │
+                 │  (ephemeral filesystem — see below)│
                  └────────────────────────────────────┘
 ```
 
@@ -380,7 +377,6 @@ The repo ships with a `render.yaml` blueprint and a Vercel-friendly dashboard, s
    - In the service's **Environment** tab, set:
      - `OPENAI_API_KEY` — your OpenRouter key (required).
      - `EXA_API_KEY` — optional, enables live web search.
-   - In the service's **Disks** tab, add a second 1 GB disk at `/app/.voltagent` (the blueprint only declares the first one).
    - Wait for the first deploy. Confirm with:
      ```
      curl https://cso-intel-assistant-api.onrender.com/agents
@@ -406,15 +402,34 @@ The repo ships with a `render.yaml` blueprint and a Vercel-friendly dashboard, s
 | Item | Limit | What we use |
 |---|---|---|
 | Render Web Service | 750 hrs/mo, sleeps after 15 min idle | Single instance |
-| Render disk | 1 GB included per disk | ~10 MB (briefings + LibSQL) |
+| Render persistent disk | **Not available on the free plan** | n/a — see below |
 | Vercel Hobby | 100 GB bandwidth/mo, no sleep | Static-ish Next.js |
 | OpenRouter | Pay per token | ~$0.05 per 20-min demo |
 | Exa.ai free tier | 1,000 searches/mo | ~3 per manual refresh |
 
+### Ephemeral state — read this before your demo
+
+Render's free plan no longer supports persistent disks (as of 2025). That means **every cold start wipes**:
+
+- LibSQL conversation memory (`memory.db` in `/app/.voltagent`)
+- Cached briefing snapshots (`data/briefings/*.json`)
+- Generated `.pptx` files (`data/presentations/`)
+- The in-memory vector store (RAG) — was already ephemeral
+
+The **seed corpus re-loads on every boot** from `data/seed/`, so the demo still works — you just lose prior chat history, generated decks, and briefing history. The first chat message after a cold start triggers boot-recovery, which prepares a fresh daily briefing.
+
+#### Demo-day runbook
+
+1. **~60s before the demo:** open the Vercel URL in an incognito tab and send any chat message. This wakes the Render service (and you eat the 30-50s cold start yourself instead of in front of the audience).
+2. **Once the first reply lands:** demo normally. Chat, upload a doc, refresh a briefing, generate a deck — all works.
+3. **If the demo takes a long break (>15 min):** the service may sleep again. Send a quick message to re-wake it before continuing.
+
+If you need durable state for an actual production deployment, the two cheap options are:
+- **Turso free tier** (hosted libSQL, wire-compatible with `@voltagent/libsql`) — swap the `file:` URL for a Turso URL in `src/index.ts:92` and you get persistent conversation memory.
+- **Render's paid plan** (starts at $7/mo) — restores persistent disks. `.pptx` files and briefing snapshots would then survive restarts.
+
 ### Gotchas
 
-- **Cold start.** Open the dashboard ~60s before the demo and send a "ping" message to wake the backend.
-- **State on cold start.** The in-memory vector store resets on every restart; the seed corpus re-loads from `data/seed/` so the demo still works.
 - **No auth.** The URL is semi-public. Don't upload documents containing real PII.
 - **Custom domains** can be added on both platforms for free, but the default `*.onrender.com` and `*.vercel.app` URLs are sufficient for a demo.
 

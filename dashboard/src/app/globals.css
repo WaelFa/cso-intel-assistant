@@ -2442,6 +2442,167 @@ h6 {
   flex-shrink: 0;
 }
 
+/* Onboarding: backend health hint shown above the agent-name input
+   on step 2. Soft amber/blue tone — neutral, not alarming. */
+.onboarding-backend-hint {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  line-height: 1.4;
+}
+.onboarding-backend-hint .animate-spin {
+  color: #2563eb;
+  flex-shrink: 0;
+}
+.onboarding-backend-hint span {
+  flex: 1;
+}
+.onboarding-backend-retry {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.onboarding-backend-retry:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+/* Onboarding: inline error after a failed save. */
+.onboarding-error {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 4px 0 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  line-height: 1.4;
+}
+.onboarding-error svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+   Backend Status Indicator
+   Top-of-page banner that appears when the backend is waking up
+   (cold start on the free tier takes 30-50s) or unreachable. A
+   small pill in the top-right shows "Connecting…" / "Working…" /
+   "Online" so the user always knows what's happening.
+   ────────────────────────────────────────────────────────────────── */
+.backend-status-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(14px) saturate(180%);
+  animation: backend-banner-in 0.3s ease-out;
+}
+.backend-status-waking {
+  background: rgba(59, 130, 246, 0.95);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.backend-status-error {
+  background: rgba(239, 68, 68, 0.95);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.backend-status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.3;
+}
+.backend-status-text strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+.backend-status-text span {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+.backend-status-retry {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.backend-status-retry:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.backend-status-pill {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 1150;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 9999px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px -6px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(10px) saturate(180%);
+  pointer-events: none;
+}
+.backend-status-pill .animate-spin,
+.backend-status-pill .animate-pulse {
+  color: var(--color-blue, #3b82f6);
+}
+
+@keyframes backend-banner-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 /* ──────────────────────────────────────────────────────────────────
    Command Palette (⌘K)
    Spotlight-style launcher for Jarvis actions + nav. Centered, with

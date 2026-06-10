@@ -21,7 +21,3 @@ services:
         sync: false
       - key: DASHBOARD_URL
         sync: false
-    disk:
-      name: cso-data
-      mountPath: /app/data
-      sizeGB: 1
