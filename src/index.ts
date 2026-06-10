@@ -227,11 +227,18 @@ new VoltAgent({
 	workflows,
 	server: honoServer({
 		// Port — honor the PORT env var (Railway, Render, Fly, etc.
-		// inject this for 12-factor portability; Railway uses it
-		// as the healthcheck target port). Fall back to 3141 for
-		// local dev. We don't pin to a literal value because the
-		// Dockerfile EXPOSE 3141 and a `PORT=3141` Railway
-		// variable must agree — both do.
+		// inject this for 12-factor portability; Railway uses the
+		// injected value as both the TCP proxy target and the
+		// healthcheck target). Fall back to 3141 for local dev.
+		// Note: Railway's injected PORT is unrelated to the
+		// Dockerfile's `EXPOSE 3141` directive — the latter is
+		// just metadata. The actual bind port is whatever the
+		// platform chose (often 8080 on Railway), so the Hono
+		// server is reachable on that port, not 3141, in
+		// production. The dashboard's BACKEND_INTERNAL_URL on
+		// Railway uses the same `.railway.internal` DNS but
+		// doesn't include a port because the platform's private
+		// network proxies whatever port the platform chose.
 		port: Number.parseInt(process.env.PORT ?? "3141", 10),
 		// Bind on all interfaces so the platform's healthcheck
 		// (which reaches the container over the container network)
@@ -531,6 +538,11 @@ new VoltAgent({
 	}),
 	logger,
 });
+
+logger.info(
+	`[boot] Hono server bound to 0.0.0.0:${process.env.PORT ?? "3141"} ` +
+		`(${process.env.PORT ? "PORT env var honored — platform-injected" : "default — local dev"})`,
+);
 
 // ── 8. Start the overnight briefing scheduler ─────────────────────
 //

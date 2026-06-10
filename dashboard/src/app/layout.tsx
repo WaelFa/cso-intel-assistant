@@ -26,15 +26,6 @@ export default function RootLayout({
     <html lang="en" className={mulish.variable} suppressHydrationWarning>
       <head>
         <link rel="icon" href="/favicon.ico" />
-        {/* Inline pre-paint script: forces light theme. Dark mode is
-            temporarily disabled — revisit later via an in-app
-            toggle. Setting data-theme="light" makes the dark CSS
-            variables in globals.css inactive. */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `try{document.documentElement.setAttribute('data-theme','light');}catch(e){}`,
-          }}
-        />
       </head>
       <body>
         <DashboardProvider>

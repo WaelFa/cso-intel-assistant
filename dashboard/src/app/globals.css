@@ -51,67 +51,7 @@
   --surface-3: #f1f5f9;
 }
 
-/* ──────────────────────────────────────────────────────────────────
-   Dark theme
-   Triggered by either the OS preference (auto) or a manual
-   data-theme="dark" on <html>. A future in-app toggle just needs
-   to set html.dataset.theme = "dark" / "light" / "system" and the
-   CSS will follow.
-   ────────────────────────────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg-outer: #0b1220;
-    --bg-main: #0f172a;
-    --bg-card: #111827;
-
-    --text-primary: #f1f5f9;
-    --text-secondary: #cbd5e1;
-    --text-muted: #94a3b8;
-
-    --border-color: #1f2937;
-    --border-hover: #334155;
-
-    --color-blue: #60a5fa;
-    --color-blue-glow: rgba(96, 165, 250, 0.18);
-
-    --color-orange-light: #1f1a0c;
-    --color-purple-light: #1c1a2b;
-    --color-green-light: #0d1f1a;
-    --color-red-light: #2a1313;
-
-    --surface-1: #111827;
-    --surface-2: #0f172a;
-    --surface-3: #1f2937;
-
-    --shadow-premium: 0 20px 40px -15px rgba(0, 0, 0, 0.45);
-  }
-}
-:root[data-theme="dark"] {
-  --bg-outer: #0b1220;
-  --bg-main: #0f172a;
-  --bg-card: #111827;
-
-  --text-primary: #f1f5f9;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
-
-  --border-color: #1f2937;
-  --border-hover: #334155;
-
-  --color-blue: #60a5fa;
-  --color-blue-glow: rgba(96, 165, 250, 0.18);
-
-  --color-orange-light: #1f1a0c;
-  --color-purple-light: #1c1a2b;
-  --color-green-light: #0d1f1a;
-  --color-red-light: #2a1313;
-
-  --surface-1: #111827;
-  --surface-2: #0f172a;
-  --surface-3: #1f2937;
-
-  --shadow-premium: 0 20px 40px -15px rgba(0, 0, 0, 0.45);
-}
+/* Dark theme support has been removed — the app is light-mode only. */
 
 * {
   box-sizing: border-box;
