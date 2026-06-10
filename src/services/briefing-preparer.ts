@@ -31,7 +31,9 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DATA_ROOT = join(__dirname, "..", "..", "data", "briefings");
+const DATA_ROOT =
+	process.env.DATA_DIR ?? join(__dirname, "..", "..", "data");
+const BRIEFINGS_DIR = join(DATA_ROOT, "briefings");
 
 const rootLogger = createPinoLogger({
 	name: "briefing-preparer",
@@ -404,7 +406,7 @@ export async function readPreparedBriefing(
 
 export async function listAvailableBriefingDates(): Promise<string[]> {
 	try {
-		const entries = await fs.readdir(DATA_ROOT);
+		const entries = await fs.readdir(BRIEFINGS_DIR);
 		return entries
 			.filter((f) => f.endsWith(".json"))
 			.map((f) => f.replace(/\.json$/, ""))
@@ -423,13 +425,13 @@ function briefingPathForDate(date: string): string {
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
 		throw new Error(`Invalid date format: ${date}`);
 	}
-	return join(DATA_ROOT, `${date}.json`);
+	return join(BRIEFINGS_DIR, `${date}.json`);
 }
 
 async function persistPreparedBriefing(
 	record: PreparedBriefingRecord,
 ): Promise<void> {
-	await fs.mkdir(DATA_ROOT, { recursive: true });
+	await fs.mkdir(BRIEFINGS_DIR, { recursive: true });
 	const path = briefingPathForDate(record.date);
 	// Write atomically via temp file + rename so a crashed write
 	// doesn't leave a half-written snapshot that the dashboard would

@@ -21,7 +21,8 @@ import { z } from "zod";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const SETTINGS_PATH = join(__dirname, "..", "..", "data", "settings.json");
+const DATA_ROOT = process.env.DATA_DIR ?? join(__dirname, "..", "..", "data");
+const SETTINGS_PATH = join(DATA_ROOT, "settings.json");
 
 const logger = createPinoLogger({
 	name: "settings-store",

@@ -89,7 +89,7 @@ const logger = createPinoLogger({
 // and docs/01-multi-agent-architecture.md → "Vector Memory".
 const memory = new Memory({
 	storage: new LibSQLMemoryAdapter({
-		url: "file:./.voltagent/memory.db",
+		url: process.env.MEMORY_DB_PATH ?? "file:./.voltagent/memory.db",
 		logger: logger.child({ component: "libsql" }),
 	}),
 	// OpenRouter exposes OpenAI-compatible embeddings; reusing the
@@ -325,7 +325,9 @@ new VoltAgent({
 
 			// ── Presentations ────────────────────────────────────────
 			// List all generated presentations with metadata.
-			const PRESENTATIONS_DIR = resolve("./data/presentations");
+			const PRESENTATIONS_DIR =
+				process.env.PRESENTATIONS_DIR ??
+				join(process.env.DATA_DIR ?? "/app/data", "presentations");
 
 			app.get("/api/presentations", (c) => {
 				try {

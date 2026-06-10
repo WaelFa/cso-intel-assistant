@@ -15,7 +15,8 @@
 // ──────────────────────────────────────────────────────────────────
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createTool } from "@voltagent/core";
 import { z } from "zod";
 
@@ -33,7 +34,14 @@ type Pptx = any;
 
 // ── Constants ─────────────────────────────────────────────────────
 
-const PRESENTATIONS_DIR = resolve("./data/presentations");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DEFAULT_PRESENTATIONS_DIR = resolve(
+	process.env.DATA_DIR ?? join(__dirname, "..", "..", "data"),
+	"presentations",
+);
+const PRESENTATIONS_DIR =
+	process.env.PRESENTATIONS_DIR ?? DEFAULT_PRESENTATIONS_DIR;
 
 // McKinsey / BCG classic color palette
 const COLORS = {

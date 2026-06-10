@@ -13,8 +13,13 @@ RUN npm run build
 
 FROM base AS runtime
 ENV NODE_ENV=production
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/data /app/.voltagent
+COPY --from=deps  /app/node_modules ./node_modules
+COPY --from=build /app/dist         ./dist
+COPY --from=build /app/data/seed    ./data/seed
 COPY package.json ./
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 EXPOSE 3141
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["npm", "start"]
