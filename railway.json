@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "/entrypoint.sh npm start",
+    "startCommand": "sh -c 'echo \"[probe] pwd=$(pwd)\"; echo \"[probe] ls .:\"; ls -la; echo \"[probe] ls data:\"; ls -la data 2>&1; echo \"[probe] ls data/seed:\"; ls -la data/seed 2>&1; exit 0'",
     "healthcheckPath": "/agents",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
