@@ -226,6 +226,18 @@ new VoltAgent({
 	agents: { agent },
 	workflows,
 	server: honoServer({
+		// Port — honor the PORT env var (Railway, Render, Fly, etc.
+		// inject this for 12-factor portability; Railway uses it
+		// as the healthcheck target port). Fall back to 3141 for
+		// local dev. We don't pin to a literal value because the
+		// Dockerfile EXPOSE 3141 and a `PORT=3141` Railway
+		// variable must agree — both do.
+		port: Number.parseInt(process.env.PORT ?? "3141", 10),
+		// Bind on all interfaces so the platform's healthcheck
+		// (which reaches the container over the container network)
+		// can connect. The provider already defaults to 0.0.0.0
+		// but we set it explicitly for clarity.
+		hostname: "0.0.0.0",
 		// CORS — the Next.js dashboard at :3000 fetches this server
 		// at :3141 directly during local dev. In production, the
 		// dashboard proxies through its own server (see
