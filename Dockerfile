@@ -13,7 +13,7 @@ RUN npm run build
 
 FROM base AS runtime
 ENV NODE_ENV=production
-RUN mkdir -p /app/data /app/.voltagent
+RUN mkdir -p /app/data/voltagent
 COPY --from=deps  /app/node_modules ./node_modules
 COPY --from=build /app/dist         ./dist
 COPY --from=build /app/data/seed    ./data/seed

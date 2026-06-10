@@ -30,7 +30,7 @@ The product persona is **Jarvis** — a calm, precise chief-of-staff style assis
 | HTTP server      | Hono via `@voltagent/server-hono`                                                          |
 | LLM provider     | [OpenRouter](https://openrouter.ai) — OpenAI-compatible API, default `openai/gpt-4o-mini`  |
 | Embeddings       | `openai/text-embedding-3-small` (1536-dim) via OpenRouter                                  |
-| Memory           | LibSQL (SQLite) at `./.voltagent/memory.db` + in-memory vector store                       |
+| Memory           | LibSQL (SQLite) at `./data/voltagent/memory.db` + in-memory vector store                   |
 | Live web search  | [Exa.ai](https://exa.ai) (`exa-js`) — optional, 15-min cache                               |
 | Document parsers | `pdf-parse`, `mammoth` (lazy-loaded on demand)                                             |
 | Scheduler        | `node-cron` (in-process; hot-reloadable from the settings panel)                           |
@@ -410,7 +410,7 @@ This project ships ready to deploy on Railway as **two services on a single Hobb
 ### State & persistence
 
 Railway services **do persist local files between restarts** (their container filesystem is mounted, unlike serverless platforms). So on the API service:
-- LibSQL conversation memory in `/app/.voltagent/memory.db` survives restarts.
+- LibSQL conversation memory in `/app/data/voltagent/memory.db` survives restarts.
 - Briefing snapshots in `/app/data/briefings/` survive.
 - Generated `.pptx` files in `/app/data/presentations/` survive.
 

@@ -89,7 +89,9 @@ const logger = createPinoLogger({
 // and docs/01-multi-agent-architecture.md → "Vector Memory".
 const memory = new Memory({
 	storage: new LibSQLMemoryAdapter({
-		url: process.env.MEMORY_DB_PATH ?? "file:./.voltagent/memory.db",
+		url:
+			process.env.MEMORY_DB_PATH ??
+			`file:${process.env.DATA_DIR ?? "data"}/voltagent/memory.db`,
 		logger: logger.child({ component: "libsql" }),
 	}),
 	// OpenRouter exposes OpenAI-compatible embeddings; reusing the
