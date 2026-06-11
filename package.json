@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env ./src",
     "dev:all": "node scripts/run-all.js",
+    "clean": "node scripts/clean.js",
     "build": "tsdown",
     "start": "node dist/index.js",
     "lint": "biome check ./src",
