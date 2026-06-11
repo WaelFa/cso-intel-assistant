@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from "react";
+import { CronExpressionParser } from "cron-parser";
 
 // Empty string → relative paths → Next.js rewrites proxy to the
 // Hono server (configured in next.config.ts). In dev this still
@@ -532,6 +533,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     () => `cso-session-${Math.random().toString(36).substring(2, 11)}`,
   );
   const abortControllerRef = useRef<AbortController | null>(null);
+  const briefingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── User identity (localStorage-backed) ─────────────────────────
   // The OnboardingModal reads `hasOnboarded` to decide whether to
@@ -697,6 +699,57 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     fetchSettings();
     fetchPresentations();
   }, []);
+
+  // Schedule a single fetchPreparedBriefing() call aligned to the next
+  // briefing-cron tick, then re-arm for the following day. This is
+  // one request per day instead of polling every minute, and lights
+  // up the bell within ~1s of the snapshot being written — no page
+  // reload required.
+  useEffect(() => {
+    const schedule = () => {
+      if (briefingTimerRef.current !== null) {
+        clearTimeout(briefingTimerRef.current);
+        briefingTimerRef.current = null;
+      }
+      if (!settings?.briefingCron) return;
+      try {
+        const interval = CronExpressionParser.parse(settings.briefingCron, {
+          tz: settings.briefingTimezone || "UTC",
+        });
+        const next = interval.next().toDate();
+        const delay = Math.max(0, next.getTime() - Date.now());
+        briefingTimerRef.current = setTimeout(() => {
+          fetchPreparedBriefing();
+          schedule();
+        }, delay);
+      } catch (err) {
+        // Invalid cron / timezone — fall back to a daily check at 08:00
+        // local so the bell still lights up if the user fixes the cron
+        // later.
+        console.error("Failed to schedule briefing timer:", err);
+        const fallback = new Date();
+        fallback.setHours(8, 0, 0, 0);
+        if (fallback.getTime() <= Date.now()) {
+          fallback.setDate(fallback.getDate() + 1);
+        }
+        briefingTimerRef.current = setTimeout(() => {
+          fetchPreparedBriefing();
+          schedule();
+        }, fallback.getTime() - Date.now());
+      }
+    };
+    schedule();
+    return () => {
+      if (briefingTimerRef.current !== null) {
+        clearTimeout(briefingTimerRef.current);
+        briefingTimerRef.current = null;
+      }
+    };
+    // We re-arm whenever the cron expression or timezone changes (e.g.
+    // user edits them in the Settings panel). fetchPreparedBriefing is
+    // stable in practice — it's defined as a plain const in this file,
+    // matching the pattern of the other fetchers above.
+  }, [settings?.briefingCron, settings?.briefingTimezone]);
 
   const fetchDocuments = async () => {
     try {
